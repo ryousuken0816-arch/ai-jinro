@@ -85,7 +85,8 @@ export class Voice {
     const item = { ev, player, audio: null };
     if ((ev.type === "say" || ev.type === "wolf") && player && !player.human && this.sound && this.vvOk && player.voice?.vv != null) {
       // 1 文ずつ、先に作り始めておく（長い発言でも話し始めが早く、途中で切れにくい）
-      item.audio = Voice.chunks(ev.text).map((t) => ({ text: t, url: this.fetchVoicevox(t, player.voice.vv) }));
+      // かたまりは約 50 字。作るのは同時に 2 つまでにして、中継を詰まらせない
+      item.audio = Voice.chunks(ev.text, 50).map((t) => ({ text: t, url: this.limited(() => this.fetchVoicevox(t, player.voice.vv)) }));
     }
     this.queue.push(item);
     this.pump();
@@ -182,22 +183,43 @@ export class Voice {
       if (token !== this.speakToken) return;    // 飛ばされた
       const url = await job.url;
       if (token !== this.speakToken) { if (url) URL.revokeObjectURL(url); return; }
-      if (url) await this.playUrl(url, player);
-      else await this.speakOne(job.text, player);
+      // 作れなかった・再生を断られたかたまりは、飛ばさずにスマホの声で読む
+      const ok = url ? await this.playUrl(url, player) : false;
+      if (!ok && token === this.speakToken) await this.speakOne(job.text, player);
     }
   }
 
+  // 同時に動かす数を 2 つまでに抑える
+  limited(job) {
+    this.slots = this.slots ?? 2;
+    this.waitingJobs = this.waitingJobs || [];
+    return new Promise((resolve) => {
+      const run = async () => {
+        this.slots--;
+        try { resolve(await job()); } finally { this.slots++; const next = this.waitingJobs.shift(); if (next) next(); }
+      };
+      if (this.slots > 0) run(); else this.waitingJobs.push(run);
+    });
+  }
+
   async fetchVoicevox(text, speaker) {
+    // 中継（インターネット越し）が詰まっても待ち続けないよう、20 秒で打ち切る（その部分はスマホの声で読む）
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20_000);
     try {
       const r = await fetch(`${this.vv.url}/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Voice-Key": this.vv.key },
         body: JSON.stringify({ text, speaker }),
+        signal: ctrl.signal,
       });
       if (!r.ok) throw new Error(String(r.status));
+      const blob = await r.blob();
+      clearTimeout(timer);
       this.vvFails = 0;
-      return URL.createObjectURL(await r.blob());
+      return URL.createObjectURL(blob);
     } catch {
+      clearTimeout(timer);
       // 1 回の失敗ではあきらめず、3 回続いたら PC が切れたとみなしてスマホの声に切り替える
       this.vvFails = (this.vvFails || 0) + 1;
       if (this.vvFails >= 3) { this.vvOk = false; this.onStatus?.("PC の声につながらないので、スマホの声に切り替えました"); }
@@ -205,14 +227,29 @@ export class Voice {
     }
   }
 
+  // 再生できたら true。断られたら false（呼び出し側がスマホの声で読み直す）
   playUrl(url, player) {
     this.onSpeaking(player, player.voice.vvName);
+    const a = this.audio, token = this.speakToken;
     return new Promise((resolve) => {
-      const done = () => { URL.revokeObjectURL(url); resolve(); };
-      this.audio.onended = done;
-      this.audio.onerror = done;
-      this.audio.src = url;
-      this.audio.play().catch(done);
+      let finished = false, retries = 0;
+      const done = (ok) => {
+        if (finished) return;
+        finished = true;
+        a.onended = a.onerror = a.onpause = null;
+        URL.revokeObjectURL(url);
+        resolve(ok);
+      };
+      a.onended = () => done(true);
+      a.onerror = () => done(false);
+      // ほかの音や通知で途中で止められたら、再開する（飛ばされたときは再開しない）
+      a.onpause = () => {
+        if (finished || a.ended || token !== this.speakToken) { if (token !== this.speakToken) done(true); return; }
+        if (retries++ < 3) setTimeout(() => { if (!finished && token === this.speakToken) a.play().catch(() => done(false)); }, 400);
+        else done(false);
+      };
+      a.src = url;
+      a.play().catch(() => done(false));
     });
   }
 
