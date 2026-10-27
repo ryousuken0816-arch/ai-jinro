@@ -62,6 +62,35 @@ input { font: inherit; }
 .rolegrid .wolf b { color: var(--danger); }
 @media (max-height: 520px) { .rolegrid { grid-template-columns: repeat(4, 1fr); } .rolegrid button { padding: 6px 8px; } }
 #hint.hurry { color: var(--danger); }
+
+/* 左上の CO ボード（CO と結果の自動集計） */
+#coboard { position: absolute; left: 12px; top: 52px; z-index: 10; background: rgba(20, 24, 34, .85); border: 1px solid #4a5468; border-radius: 10px;
+  padding: 6px 10px; font-size: 13px; line-height: 1.6; max-width: min(320px, 42vw); pointer-events: none; }
+#coboard:empty { display: none; }
+#coboard .r { font-weight: bold; margin-right: 4px; }
+#coboard .w { color: #7fe0a0; } #coboard .b { color: #ff8a80; }
+/* 画面中央の案内（「○番さんが発言します」など） */
+#announce { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 12; background: rgba(20, 24, 34, .88); border-radius: 12px;
+  padding: 10px 22px; font-size: 18px; font-weight: bold; pointer-events: none; opacity: 0; transition: opacity .4s; white-space: nowrap; }
+#announce.show { opacity: 1; }
+/* CO 編集 */
+#comenu .corow { display: flex; gap: 6px; margin-top: 6px; }
+#comenu select { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid #4a5468; border-radius: 8px; padding: 4px; font: inherit; }
+#comenu .sel { border-color: var(--accent); background: #4a3f1c; }
+#comenu .primary { flex: 1; background: var(--blue); color: #0d1a2a; border: 0; font-weight: bold; }
+#cofire { background: #e9b949; color: #1d2230; border: 0; font-weight: bold; }
+#cofire:disabled { background: var(--panel-2); color: var(--muted); }
+#cofire.ready:not(:disabled) { animation: pulse 1s infinite; }
+/* 頭上: 名前の色（占い・霊媒の結果）、自分用メモ、CO の強調 */
+.lab .nmtext.white { color: #7fe0a0; } .lab .nmtext.black { color: #ff8a80; }
+.lab .memo { display: inline-block; margin-left: 4px; font-size: 11px; padding: 0 5px; border-radius: 5px; background: #e6e1d6; color: #1d2230; font-weight: bold; }
+.lab .memo.m狼 { background: #ff8a80; } .lab .memo.m狂 { background: #d0a0ff; } .lab .memo.m白 { background: #9fe8b8; }
+.lab .tag.fresh { background: #e9b949; box-shadow: 0 0 0 2px #fff3c4; }
+@media (max-height: 520px) {
+  #coboard { top: 38px; font-size: 11px; padding: 4px 8px; max-width: 34vw; }
+  #announce { font-size: 15px; padding: 8px 16px; }
+}
+@media (max-width: 700px) { #coboard { top: 90px; font-size: 11px; } }
 #caption .sum { display: inline-block; background: #fde7a8; color: #6b4a00; border-radius: 6px; padding: 0 8px; margin-right: 8px; font-weight: bold; font-size: .9em; }
 .lab .stance { display: inline-block; margin-top: 2px; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: rgba(255, 253, 247, .92); color: #3b3424; max-width: 11em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 @media (max-height: 520px) { .lab .stance { font-size: 10px; max-width: 8em; } }
@@ -178,6 +207,8 @@ input { font: inherit; }
   <div id="stage"></div>
   <div id="labels"></div>
   <div id="top"><div id="phase">AI人狼</div><div id="hint"></div></div>
+  <div id="coboard"></div>
+  <div id="announce"></div>
   <div id="caption"></div>
   <div id="toast"></div>
   <div id="rotate">
@@ -197,18 +228,22 @@ input { font: inherit; }
       <button id="logbtn">チャットと履歴</button>
       <button id="settingsbtn">設定</button>
     </div>
-    <form id="say"><input id="sayinput" placeholder="発言の順番を待っています" autocomplete="off" enterkeyhint="send" disabled><button type="button" id="micbtn" aria-label="音声入力">🎤</button><button id="saybtn" disabled>送信</button></form>
+    <form id="say"><input id="sayinput" placeholder="発言の順番を待っています" autocomplete="off" enterkeyhint="send" disabled><button type="button" id="micbtn" aria-label="音声入力">🎤</button><button id="saybtn" disabled>発言終了</button></form>
     <div id="right">
+      <!-- CO 編集: 役職と結果を先にセットしておき、自分の番に「COする」を 1 回押して出す -->
       <div id="comenu">
-        <div class="grid">
-          <button data-co="占い師">占いCO</button><button data-co="霊媒師">霊媒CO</button>
-          <button data-co="騎士">騎士CO</button><button data-co="村人">村人CO</button>
+        <h4>名乗る役職</h4>
+        <div class="grid" id="corole">
+          <button data-co="占い師">占い師</button><button data-co="霊媒師">霊媒師</button>
+          <button data-co="騎士">騎士</button><button data-co="村人">村人</button>
         </div>
-        <h4>結果を報告</h4>
-        <div id="replist"></div>
+        <h4>結果（占い・霊媒のとき）</h4>
+        <div class="corow"><select id="cotarget"></select><button data-res="白">白</button><button data-res="黒">黒</button></div>
+        <div class="corow"><button id="coclear">取り消す</button><button id="coset" class="primary">セットする</button></div>
       </div>
       <button id="skipbtn" title="いまの発言を飛ばす">飛ばす</button>
-      <button id="cobtn">CO</button>
+      <button id="cofire" disabled>COする</button>
+      <button id="cobtn">CO編集</button>
       <div id="roster"></div>
       <div id="credit"></div>
     </div>
@@ -257,7 +292,7 @@ input { font: inherit; }
 
 <script type="module">
 import * as THREE from "three";
-import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES, SPEECH_SECONDS, fixTranscript } from "./game.js";
+import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES, fixTranscript } from "./game.js";
 import { Voice, makeRecognizer, normalizeSpeech, GAPS } from "./voice.js";
 
 const $ = (s) => document.querySelector(s);
@@ -477,7 +512,24 @@ function person(seed) {
 const seats = {};   // seat -> { root, body, ringMesh, label }
 let base = 1, yaw = 0, zoom = 1;
 
+// 開票のとき、誰が誰に入れたかを広場に矢印で出す
+const voteArrows = new THREE.Group();
+scene.add(voteArrows);
+function addVoteArrow(fromSeat, toSeat) {
+  const a = seats[fromSeat], b = seats[toSeat];
+  if (!a || !b) return;
+  const p1 = new THREE.Vector3(), p2 = new THREE.Vector3();
+  a.body.head.getWorldPosition(p1); b.body.head.getWorldPosition(p2);
+  p1.y -= 0.35; p2.y -= 0.35;
+  const dir = p2.clone().sub(p1), len = dir.length() - 0.35;
+  const arrow = new THREE.ArrowHelper(dir.normalize(), p1, len, 0xff6b5a, 0.35, 0.22);
+  arrow.line.material.linewidth = 2;
+  voteArrows.add(arrow);
+}
+function clearVoteArrows() { while (voteArrows.children.length) voteArrows.remove(voteArrows.children[0]); }
+
 function clearSeats() {
+  clearVoteArrows();
   for (const s of Object.values(seats)) { scene.remove(s.root); s.label.remove(); }
   for (const k of Object.keys(seats)) delete seats[k];
 }
@@ -501,7 +553,7 @@ function buildSeats(players, baseSeat) {
     scene.add(root);
     const label = document.createElement("div");
     label.className = "lab";
-    label.addEventListener("click", () => pickSeat(p.seat));
+    label.addEventListener("click", () => tapSeat(p.seat));
     $("#labels").appendChild(label);
     seats[p.seat] = { root, body, ringMesh, label, dead: false };
   }
@@ -512,12 +564,16 @@ function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.codePointAt(0
 function setDead(s, dead) {
   if (s.dead === dead) return;
   s.dead = dead;
-  for (const m of s.body.mats) { m.transparent = dead; m.opacity = dead ? 0.18 : 1; m.depthWrite = !dead; }
+  // 死んだ人は白っぽい半透明の霊体にする
+  for (const m of s.body.mats) {
+    m.transparent = dead; m.opacity = dead ? 0.35 : 1; m.depthWrite = !dead;
+    m.emissive.set(dead ? "#dfe8ff" : "#000000"); m.emissiveIntensity = dead ? 0.8 : 1;
+  }
   s.body.group.traverse((o) => { if (o.isMesh) o.castShadow = !dead; });
 }
 
 // --- カメラ（ドラッグで回す・ホイールで寄る）
-let drag = null;
+let drag = null, lastTap = 0;
 renderer.domElement.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y0: yaw, moved: false }; renderer.domElement.classList.add("dragging"); });
 addEventListener("pointermove", (e) => {
   if (!drag) return;
@@ -527,7 +583,12 @@ addEventListener("pointermove", (e) => {
 });
 addEventListener("pointerup", (e) => {
   renderer.domElement.classList.remove("dragging");
-  if (drag && !drag.moved && e.target === renderer.domElement) clickPick(e);
+  if (drag && !drag.moved && e.target === renderer.domElement) {
+    // ダブルタップでカメラを元の向きに戻す
+    if (Date.now() - lastTap < 320) { yaw = 0; zoom = 1; }
+    lastTap = Date.now();
+    clickPick(e);
+  }
   drag = null;
 });
 renderer.domElement.addEventListener("wheel", (e) => { zoom = Math.min(1.6, Math.max(0.55, zoom * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); }, { passive: false });
@@ -617,6 +678,48 @@ function frame() {
 
 let S = null, lastId = 0, lastSpeech = null, votesDay = null, endShown = false, roleShown = false, builtFor = null, lastPendingKind = null;
 let stanceShown = {};   // 席番号 → その人のいまの主張（要点）。声で流れたものだけ出す
+let coShown = {};       // 席番号 → { role, results: [[対象席, 白/黒], …] }。CO ボード用（声で流れたものだけ）
+let coFresh = {};       // 席番号 → CO した時刻（頭上のタグを 60 秒目立たせる）
+let memos = {};         // 席番号 → 自分用メモ（白・狼・狂・？）
+let coReserve = null;   // CO 編集でセットした内容 { role, target, result }
+
+let voteTally = [];     // [投票した席, 投票された席]
+let runoffNext = false; // 次の票から決選投票
+// 開票結果: 得票の多い順に「3番 ← 1・4・7（3票）」
+function renderVoteTally() {
+  const by = {};
+  for (const [f, t] of voteTally) (by[t] = by[t] || []).push(f);
+  const name = (seat) => (S && S.players[seat - 1] ? S.players[seat - 1].name : "");
+  $("#votelist").innerHTML = Object.entries(by).sort((a, b) => b[1].length - a[1].length)
+    .map(([t, fs]) => `<div><b>${t}番 ${esc(name(+t))}</b> ← ${fs.join("・")}（${fs.length}票）</div>`).join("");
+}
+
+let announceTimer = null;
+function announce(text) {
+  const a = $("#announce");
+  a.textContent = text;
+  a.classList.add("show");
+  clearTimeout(announceTimer);
+  announceTimer = setTimeout(() => a.classList.remove("show"), 1600);
+}
+
+function coLabel(r) {
+  const parts = [];
+  if (r.role) parts.push(r.role);
+  if (r.target && r.result) parts.push(`${r.target}番${r.result}`);
+  return parts.join("・");
+}
+
+// 左上の CO ボード: [占い] 5番 → 9白・3黒 のように自動で一覧にする
+function renderCoBoard() {
+  const short = { "占い師": "占い", "霊媒師": "霊媒", "騎士": "騎士", "村人": "村人" };
+  const rows = Object.entries(coShown).sort((a, b) => a[0] - b[0]).map(([seat, c]) => {
+    const res = c.results.map(([t, r]) => `<span class="${r === "白" ? "w" : "b"}">${t}${r}</span>`).join("・");
+    return `<div><span class="r">[${short[c.role] || c.role}]</span>${seat}番${res ? " → " + res : ""}</div>`;
+  });
+  const html = rows.join("");
+  if ($("#coboard").innerHTML !== html) $("#coboard").innerHTML = html;
+}
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
@@ -632,32 +735,48 @@ function render() {
     const rv = S.reveal && S.reveal.find((r) => r.seat === p.seat);
     const isMe = S.me && S.me.seat === p.seat;
     s.label.className = "lab" + (p.alive ? "" : " dead") + (opts.includes(p.seat) ? " pick" : "");
+    // 占い師・霊媒師のときは、結果が分かった人の名前を白なら緑・黒なら赤にする
+    const known = S.me && S.me.known ? S.me.known[p.seat] : null;
+    const nameCls = known === "白" ? " white" : known === "黒" ? " black" : "";
+    const memo = memos[p.seat];
+    const fresh = coFresh[p.seat] && Date.now() - coFresh[p.seat] < 60_000;   // CO から 60 秒は目立たせる
     s.label.innerHTML = (thinking && S.speaking === p.seat ? `<div><span class="think">考え中…</span></div>` : "")
-      + `<div class="nm"><span class="no">${p.seat}</span><span class="nmtext">${esc(p.name)}</span>${isMe ? "（自分）" : ""}${p.alive ? "" : " ✝"}</div>`
-      + (p.co || rv ? `<div>${p.co ? `<span class="tag">${esc(p.co)}CO</span> ` : ""}${rv ? `<span class="tag role">${esc(rv.role)}</span>` : ""}</div>` : "")
+      + `<div class="nm"><span class="no">${p.seat}</span><span class="nmtext${nameCls}">${esc(p.name)}</span>${isMe ? "（自分）" : ""}${p.alive ? "" : " ✝"}`
+      + (memo ? `<span class="memo m${memo}">${memo}</span>` : "") + `</div>`
+      + (p.co || rv ? `<div>${p.co ? `<span class="tag${fresh ? " fresh" : ""}">${esc(p.co)}CO</span> ` : ""}${rv ? `<span class="tag role">${esc(rv.role)}</span>` : ""}</div>` : "")
       + (p.alive && stanceShown[p.seat] ? `<div><span class="stance">${esc(stanceShown[p.seat])}</span></div>` : "");
   }
   const alive = S.players.filter((p) => p.alive).length;
   const ph = { day: "昼", vote: "投票", night: "夜", end: "終了" }[S.phase] || "";
-  $("#phase").textContent = S.over ? `ゲーム終了 ― ${S.winner || ""}の勝利` : `${S.day}日目 ${ph}　生存 ${alive}/${S.players.length}`;
+  const firstNight = S.day === 1 && S.phase === "night" && S.cursor && S.cursor.stage === "start";
+  $("#phase").textContent = S.over ? `ゲーム終了 ― ${S.winner || ""}の勝利`
+    : firstNight ? `初日の夜　生存 ${alive}/${S.players.length}` : `${S.day}日目 ${ph}　生存 ${alive}/${S.players.length}`;
   $("#hint").textContent = pend ? pend.prompt : "";
   const speak = pend && pend.kind === "speak";
   $("#sayinput").disabled = !speak; $("#saybtn").disabled = !speak;
   $("#sayinput").placeholder = speak ? "発言を入力（空のまま送ると黙ります）" : (S.me && !S.me.alive ? "あなたは死亡しました（観戦中）" : "発言の順番を待っています");
   const counts = {}; (S.setup || []).forEach((r) => counts[r] = (counts[r] || 0) + 1);
   $("#roster").textContent = Object.entries(counts).map(([r, n]) => `${r.replace("師", "")}${n}`).join(" ");
-  $("#cobtn").disabled = !S.me || !S.me.alive || !["day", "vote"].includes(S.phase) || S.over;
-  $("#replist").innerHTML = S.players.filter((p) => p.alive && (!S.me || p.seat !== S.me.seat)).map((p) =>
-    `<div class="rep"><span>${p.seat} ${esc(p.name)}</span><button data-rep="${p.seat}" data-res="白">白</button><button data-rep="${p.seat}" data-res="黒">黒</button></div>`).join("");
+  // CO 編集はいつでも（夜のうちにも）セットでき、「COする」は自分の発言の番だけ押せる
+  $("#cobtn").disabled = !S.me || !S.me.alive || S.over;
+  $("#cofire").disabled = !(speak && coReserve);
+  $("#cofire").classList.toggle("ready", !!coReserve);
+  $("#cofire").textContent = coReserve ? `COする（${coLabel(coReserve)}）` : "COする";
+  const sel = $("#cotarget"), keep = sel.value;
+  sel.innerHTML = `<option value="">結果なし</option>` + S.players.filter((p) => !S.me || p.seat !== S.me.seat)
+    .map((p) => `<option value="${p.seat}">${p.seat}番 ${esc(p.name)}</option>`).join("");
+  sel.value = keep;
+  renderCoBoard();
   renderCaption();
   // 自分の番や投票が来たら知らせる（スマホは振動も）
   const kind = pend ? pend.kind : null;
   if (kind && kind !== lastPendingKind) {
-    toast(kind === "speak" ? "あなたの番です" : kind === "vote" ? "投票の時間です" : "夜の行動を選んでください");
+    if (kind === "speak") announce("あなたの発言です");
+    else toast(kind === "vote" ? "投票の時間です。追放したい人をタップしてください" : "夜の行動を選んでください");
     if (navigator.vibrate) navigator.vibrate(150);
   }
   lastPendingKind = kind;
-  if (S.me && !roleShown) { roleShown = true; showRole(); }
+  if (S.me && !roleShown) { roleShown = true; showRoleCard(); }
   if (S.over && !endShown) { endShown = true; showEnd(); }
 }
 
@@ -698,13 +817,31 @@ function addLog(e) {
   log.insertAdjacentHTML("beforeend", `<div class="e ${e.type}">${html}</div>`);
   log.scrollTop = log.scrollHeight;
   if (e.type === "say") { lastSpeech = e; if (e.summary) stanceShown[e.seat] = e.summary; }
+  if (e.type === "co") { coShown[e.seat] = { role: e.text.replace(" CO", ""), results: coShown[e.seat]?.results || [] }; coFresh[e.seat] = Date.now(); }
+  if (e.type === "report") {
+    const m = e.text.match(/^(.+) は(白|黒)/), t = m && S && S.players.find((p) => p.name === m[1]);
+    if (t) { coShown[e.seat] = coShown[e.seat] || { role: "占い師", results: [] }; coShown[e.seat].results.push([t.seat, m[2]]); }
+  }
   if (e.type === "phase") lastSpeech = null;
   if (e.type === "vote") {
-    if (votesDay !== e.day) { votesDay = e.day; $("#votelist").innerHTML = ""; }
-    $("#votelist").insertAdjacentHTML("beforeend", `<div>${esc(e.text)}</div>`);
+    if (votesDay !== e.day || runoffNext) { votesDay = e.day; runoffNext = false; voteTally = []; clearVoteArrows(); }
+    const [fromName, toName] = e.text.split(" → ");
+    const to = S && S.players.find((p) => p.name === toName);
+    if (to) { voteTally.push([e.seat, to.seat]); addVoteArrow(e.seat, to.seat); }
+    renderVoteTally();
     $("#votes").classList.add("open");
   }
-  if (e.type === "phase" && !e.text.includes("投票")) $("#votes").classList.remove("open");
+  // 決選投票になっても、1 回目の結果は決選の票が入り始めるまで残しておく
+  if (e.type === "sys" && e.text.includes("決選投票")) runoffNext = true;
+  if (e.type === "phase" && !e.text.includes("投票")) { $("#votes").classList.remove("open"); clearVoteArrows(); }
+}
+
+// 始めに「役割がランダムに決まります」と出してから、自分の役職を見せる
+function showRoleCard() {
+  if (game && game.S.events.length > 3) { showRole(); return; }   // 続きから再開したときはすぐ見せる
+  $("#rolebody").innerHTML = "<h2>役割がランダムに決まります</h2><p>そのままお待ちください…</p>";
+  $("#roleModal").classList.add("open");
+  setTimeout(showRole, 2200);
 }
 
 function showRole() {
@@ -759,7 +896,7 @@ function view() {
   const showAll = G.watch || G.over;
   return {
     ...G, setup: SETUP,
-    me: h ? { seat: h.seat, name: h.name, role: h.role, team: ROLES[h.role][0], desc: ROLES[h.role][1], secrets: h.secrets, alive: h.alive } : null,
+    me: h ? { seat: h.seat, name: h.name, role: h.role, team: ROLES[h.role][0], desc: ROLES[h.role][1], secrets: h.secrets, alive: h.alive, known: h.known || {} } : null,
     reveal: showAll ? G.players.map((p) => ({ seat: p.seat, name: p.name, role: p.role, alive: p.alive,
       skill: p.persona ? p.persona.skill : "", thoughts: p.thoughts.slice(-5) })) : null,
   };
@@ -770,7 +907,10 @@ voice.onShow = (ev) => {
   if (!ev.private || (game && game.S.watch)) addLog(ev);
   refresh();
 };
-voice.onSpeaking = (p, vvName) => { $("#credit").textContent = vvName ? `VOICEVOX:${vvName}` : ""; };
+voice.onSpeaking = (p, vvName) => {
+  $("#credit").textContent = vvName ? `VOICEVOX:${vvName}` : "";
+  if (p && !vvName) announce(`${p.seat}番 ${p.name} さんの発言`);
+};
 
 const ui = {
   onEvent: (ev) => voice.enqueue(ev, ev.seat ? game.S.players[ev.seat - 1] : null),
@@ -781,6 +921,7 @@ const ui = {
 
 function resetScreen() {
   S = null; lastSpeech = null; votesDay = null; endShown = false; roleShown = false; builtFor = null; lastPendingKind = null; stanceShown = {};
+  coShown = {}; coFresh = {}; coReserve = null; voteTally = []; memos = {};
   clearSeats();
   $("#log").innerHTML = ""; $("#votes").classList.remove("open"); $("#caption").innerHTML = "";
 }
@@ -801,6 +942,7 @@ async function begin(state, resumed) {
   if (game) game.stop();
   resetScreen();
   game = new Game(state, brain, theory, ui);
+  try { memos = JSON.parse(localStorage.getItem(memoKey()) || "{}"); } catch { memos = {}; }
   if (resumed) {
     // 保存してあった出来事は、声なしでそのまま並べ直す
     for (const ev of state.events) if (!ev.private || state.watch) addLog(ev);
@@ -898,12 +1040,53 @@ $("#landscapebtn").onclick = async () => {
 $("#logbtn").onclick = () => $("#log").classList.toggle("open");
 $("#cobtn").onclick = () => $("#comenu").classList.toggle("open");
 document.querySelectorAll("[data-close]").forEach((b) => b.onclick = () => b.closest(".modal").classList.remove("open"));
-$("#comenu").addEventListener("click", (ev) => {
-  const t = ev.target, me = game && game.human();
-  if (!me || !["day", "vote"].includes(game.S.phase)) return;
-  if (t.dataset.co) { game.declareCo(me.seat, t.dataset.co); $("#comenu").classList.remove("open"); }
-  if (t.dataset.rep) { game.declareReport(me.seat, +t.dataset.rep, t.dataset.res); $("#comenu").classList.remove("open"); }
+// --- CO 編集: 役職と結果を選んで「セットする」。自分の番に「COする」で、CO と結果がまとめて出る
+let coDraft = { role: null, result: null };
+function paintCoMenu() {
+  document.querySelectorAll("#corole [data-co]").forEach((b) => b.classList.toggle("sel", b.dataset.co === coDraft.role));
+  document.querySelectorAll("#comenu [data-res]").forEach((b) => b.classList.toggle("sel", b.dataset.res === coDraft.result));
+}
+$("#cobtn").addEventListener("click", () => {
+  coDraft = coReserve ? { role: coReserve.role, result: coReserve.result } : { role: null, result: null };
+  if (coReserve?.target) $("#cotarget").value = coReserve.target;
+  paintCoMenu();
 });
+$("#comenu").addEventListener("click", (ev) => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  if (t.dataset.co) { coDraft.role = coDraft.role === t.dataset.co ? null : t.dataset.co; paintCoMenu(); }
+  if (t.dataset.res) { coDraft.result = coDraft.result === t.dataset.res ? null : t.dataset.res; paintCoMenu(); }
+  if (t.id === "coclear") { coReserve = null; $("#comenu").classList.remove("open"); refresh(); toast("CO の予約を取り消しました"); }
+  if (t.id === "coset") {
+    const target = +$("#cotarget").value || null;
+    const r = { role: coDraft.role, target: target && coDraft.result ? target : null, result: target ? coDraft.result : null };
+    if (!r.role && !r.result) { toast("役職か結果を選んでください", true); return; }
+    coReserve = r;
+    $("#comenu").classList.remove("open");
+    refresh();
+    toast(`セットしました（${coLabel(r)}）。自分の番に「COする」を押してください`);
+  }
+});
+$("#cofire").addEventListener("pointerdown", (ev) => ev.preventDefault());
+$("#cofire").onclick = () => {
+  const me = game && game.human();
+  if (!me || !coReserve || !game.S.pending || game.S.pending.kind !== "speak") return;
+  if (coReserve.role && me.co !== coReserve.role) game.declareCo(me.seat, coReserve.role);
+  if (coReserve.target && coReserve.result) game.declareReport(me.seat, coReserve.target, coReserve.result);
+  coReserve = null;
+  refresh();
+};
+
+// 名前をタップすると、自分用のメモ（白 → 狼 → 狂 → ？ → なし）を付けられる。選ぶ場面ではその人を選ぶ
+const MEMO_ORDER = ["白", "狼", "狂", "？", ""];
+const memoKey = () => `jinro.memo.${game?.S.id || 0}`;
+function tapSeat(seat) {
+  if (S && S.pending && S.pending.kind !== "speak" && S.pending.options.includes(seat)) { pickSeat(seat); return; }
+  if (!game) return;
+  memos[seat] = MEMO_ORDER[(MEMO_ORDER.indexOf(memos[seat] || "") + 1) % MEMO_ORDER.length];
+  try { localStorage.setItem(memoKey(), JSON.stringify(memos)); } catch {}
+  refresh();
+}
 
 let toastTimer = null;
 function toast(text, err = false) {
@@ -919,77 +1102,81 @@ function toast(text, err = false) {
 $("#saybtn").addEventListener("pointerdown", (ev) => ev.preventDefault());
 $("#micbtn").addEventListener("pointerdown", (ev) => ev.preventDefault());
 
+// --- 自分の番: 自動でマイクが入り、「発言終了」か時間切れで締める
+// 声で話した分は、決まった直し方（番号・用語）→ Claude による誤変換直し の順に整えてから送る
+let speakStart = null, speakTurn = 0, fixing = false, finishing = false, usedMic = false;
+const AUTO_MIC_KEY = "jinro.autoMic";
+let autoMic = (() => { try { return localStorage.getItem(AUTO_MIC_KEY) !== "false"; } catch { return true; } })();
+
+async function polish(raw) {
+  let text = normalizeSpeech(raw);
+  if (MOCK || !game || !game.brain.quick || !text.trim()) return text;
+  fixing = true;
+  try { text = (await fixTranscript(game.brain, text, game.S.players)) || text; } catch { /* 決まった直し方の結果を使う */ }
+  fixing = false;
+  return text;
+}
+
+async function finishSpeech(reason) {
+  if (finishing || !game || !game.S.pending || game.S.pending.kind !== "speak") return;
+  finishing = true;
+  const input = $("#sayinput"), turn = speakTurn;
+  const elapsed = speakStart ? Math.round((Date.now() - speakStart) / 1000) : null;
+  let text = input.value;
+  if (recognizer && recognizer.active()) text = (await recognizer.finish()) || text;
+  if (usedMic && text.trim()) {
+    input.value = text;
+    $("#hint").textContent = "誤変換を直しています…";
+    text = await polish(text);
+  }
+  if (turn === speakTurn && game.submit(text, elapsed)) {
+    input.value = ""; input.blur();
+    if (text.trim()) { lastSpeech = { seat: game.human().seat, name: game.human().name, text }; renderCaption(); }
+    toast(reason === "timeout" ? (text.trim() ? "時間切れのため発言を終えました" : "時間切れです（黙ったことになります）") : "発言を終えました");
+  }
+  finishing = false;
+}
+
 $("#say").onsubmit = (ev) => {
   ev.preventDefault();
-  const input = $("#sayinput"), text = input.value;
-  recognizer?.abort();
-  if (game && game.submit(text)) {
-    input.value = "";
-    input.blur();
-    toast("送信しました");
-  } else {
-    toast("いまはあなたの発言の番ではありません", true);
-  }
+  if (!game || !game.S.pending || game.S.pending.kind !== "speak") { toast("いまはあなたの発言の番ではありません", true); return; }
+  finishSpeech("button");
 };
 
-// --- あなたの発言時間（最大 60 秒）。時間が来たら入力中の文字をそのまま送る
-let speakStart = null, speakTurn = 0;
 setInterval(() => {
   const pend = game && game.S.pending;
   if (!pend || pend.kind !== "speak") { speakStart = null; $("#hint").classList.remove("hurry"); return; }
   if (speakStart === null) {
-    // 自分の番が始まったら、前の番の文字が残らないよう入力欄を空にする
+    // 自分の番が始まった: 入力欄を空にして、自動でマイクを入れる
     speakStart = Date.now();
     speakTurn++;
-    if (!fixing) $("#sayinput").value = "";
+    usedMic = false;
+    $("#sayinput").value = "";
+    if (autoMic && recognizer && !recognizer.active()) {
+      if (recognizer.start()) usedMic = true;
+      else toast("🎤を押すと話せます（文字で打つこともできます）");
+    }
   }
-  const left = Math.max(0, SPEECH_SECONDS - Math.floor((Date.now() - speakStart) / 1000));
-  $("#hint").textContent = fixing ? `誤変換を直しています…　残り ${left} 秒` : `${pend.prompt}　残り ${left} 秒`;
+  const total = pend.seconds || 60;
+  const left = Math.max(0, total - Math.floor((Date.now() - speakStart) / 1000));
+  if (!finishing) $("#hint").textContent = `${pend.prompt}　残り ${left} 秒`;
   $("#hint").classList.toggle("hurry", left <= 10);
-  if (left === 0 && !fixing) {
-    recognizer?.abort();
-    const text = $("#sayinput").value;
-    if (game.submit(text)) { $("#sayinput").value = ""; $("#sayinput").blur(); toast(text.trim() ? "時間切れのため送信しました" : "時間切れです（黙ったことになります）"); }
-  }
+  if (left === 0) finishSpeech("timeout");
 }, 250);
-
-// --- 音声入力: マイクを押して話すと文字になる。確かめてから送信
-// 話し終わったら、決まった直し方（番号・用語）→ Claude による誤変換直し の順に整えて、入力欄に入れる
-let fixing = false;
-async function polishTranscript(raw) {
-  const input = $("#sayinput");
-  // 自分の番が終わったあとに届いた聞き取り結果は使わない
-  if (!game || !game.S.pending || game.S.pending.kind !== "speak") return;
-  const turn = speakTurn;
-  let text = normalizeSpeech(raw);
-  input.value = text;
-  if (MOCK || !game.brain.quick) return;
-  fixing = true;
-  const before = input.value;
-  input.placeholder = "誤変換を直しています…";
-  $("#hint").textContent = "誤変換を直しています…";
-  try {
-    const fixed = await fixTranscript(game.brain, text, game.S.players);
-    // 直している間にあなたが書き換えていたら、そちらを優先する
-    if (turn === speakTurn && input.value === before && fixed) { input.value = fixed; if (fixed !== text) toast("聞き間違いを直しました。確かめて送信してください"); }
-  } catch { /* 直せなくても、決まった直し方の結果はそのまま使える */ }
-  fixing = false;
-  refresh();
-}
 
 const recognizer = makeRecognizer(
   (text) => { $("#sayinput").value = text; },
   (on, err) => {
     $("#micbtn").classList.toggle("on", on);
     if (err === "not-allowed") toast("マイクの使用が許可されていません。ブラウザの設定で許可してください", true);
-    else if (err && err !== "no-speech" && err !== "aborted") toast("うまく聞き取れませんでした。もう一度押して話してください", true);
+    else if (err && err !== "no-speech" && err !== "aborted") toast("うまく聞き取れませんでした。もう一度🎤を押して話してください", true);
   },
-  (finalText) => polishTranscript(finalText),
 );
 $("#micbtn").onclick = () => {
   if (!recognizer) { toast("このブラウザは音声入力に対応していません", true); return; }
   if ($("#sayinput").disabled) { toast("あなたの番になったら話せます", true); return; }
-  recognizer.toggle();
+  if (recognizer.active()) recognizer.pause();
+  else if (recognizer.start($("#sayinput").value)) usedMic = true;
 };
 
 if (MOCK) $("#modenote").textContent = "お試しモード（API を使わず、AI は適当に答えます）";

@@ -192,36 +192,55 @@ export class Voice {
 
 // --- 音声入力（ブラウザの機能を使う）
 
-// onText(途中の文字) は話している最中に、onFinal(最後の文字) は話し終わったときに呼ばれる
-export function makeRecognizer(onText, onState, onFinal) {
+// 自分の番のあいだ聞き取り続ける。onText(ここまでの文字) が話している最中に何度も呼ばれる。
+// 途中で区切れても（息継ぎなど）自動で聞き直し、それまでの文字に足していく。
+export function makeRecognizer(onText, onState) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
   const r = new SR();
   r.lang = "ja-JP";
   r.interimResults = true;
-  r.continuous = false;
-  let active = false, last = "", discard = false;
+  r.continuous = true;
+  let wanted = false;     // 聞き取りを続けたいか
+  let running = false;    // ブラウザの聞き取りが動いているか
+  let done = "";          // 前の区切りまでに確定した文字
+  let current = "";       // いまの区切りの文字
+  let finishing = null;   // finish() の結果を待っている人
+  const text = () => done + current;
+
   r.onresult = (e) => {
-    if (discard) return;
-    let t = "";
-    for (const res of e.results) t += res[0].transcript;
-    last = t;
-    onText(t);
+    current = "";
+    for (const res of e.results) current += res[0].transcript;
+    onText(text());
   };
   r.onend = () => {
-    active = false; onState(false);
-    if (last && !discard) onFinal(last);
-    last = ""; discard = false;
+    running = false;
+    done = text(); current = "";
+    if (finishing) { const f = finishing; finishing = null; wanted = false; onState(false); f(done); return; }
+    if (wanted) { try { r.start(); running = true; return; } catch {} }
+    wanted = false;
+    onState(false);
   };
-  r.onerror = (e) => { active = false; onState(false, e.error); };
+  r.onerror = (e) => {
+    if (e.error === "no-speech" || e.error === "aborted") return;   // 黙っていただけ。onend で聞き直す
+    wanted = false;
+    onState(false, e.error);
+  };
   return {
-    toggle() {
-      if (active) { r.stop(); return; }
-      last = ""; discard = false;
-      try { r.start(); active = true; onState(true); } catch { onState(false, "start"); }
+    active: () => wanted,
+    // 聞き取りを始める。prefix はそれまでに入力欄にあった文字（続きから話すとき）。始められなければ false
+    start(prefix = "") {
+      done = prefix; current = ""; wanted = true;
+      try { if (!running) { r.start(); running = true; } onState(true); return true; }
+      catch { wanted = false; onState(false); return false; }
     },
-    // 送信や時間切れのときに呼ぶ。あとから届く聞き取り結果は捨てる（入力欄に書き戻さない）
-    abort() { discard = true; last = ""; if (active) r.abort(); },
+    // 一時停止（それまでの文字は入力欄に残る）
+    pause() { wanted = false; if (running) r.stop(); onState(false); },
+    // 発言を締める: 聞き取りを止めて、最後までの文字を返す
+    finish() {
+      if (!running) { wanted = false; onState(false); return Promise.resolve(text()); }
+      return new Promise((resolve) => { finishing = resolve; wanted = false; r.stop(); setTimeout(() => { if (finishing) { finishing = null; resolve(text()); } }, 1500); });
+    },
   };
 }
 

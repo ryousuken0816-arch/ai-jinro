@@ -27,15 +27,17 @@ export const ROLES = {
 export const SETUP = ["人狼", "人狼", "狂人", "占い師", "霊媒師", "騎士", "村人", "村人", "村人"];
 const CO_ROLES = ["占い師", "霊媒師", "騎士", "村人"];
 const ROUNDS = 2;
-export const SPEECH_SECONDS = 60;   // 1 回の発言時間の上限
-const MAX_SPEECH = 250;             // 60 秒で読み上げられる字数の目安
+// 1 回の発言時間の上限（1 周目 60 秒・2 周目 90 秒・遺言 45 秒）と、その時間で読み上げられる字数の目安
+export const ROUND_SECONDS = [60, 90];
+export const LASTWORD_SECONDS = 45;
+const charsFor = (sec) => Math.round(sec * 4.2);
 
 // 長すぎる発言は、上限の字数までの最後の句点で切る
-function clip(text) {
-  if ([...text].length <= MAX_SPEECH) return text;
-  const head = [...text].slice(0, MAX_SPEECH).join("");
+function clip(text, max) {
+  if ([...text].length <= max) return text;
+  const head = [...text].slice(0, max).join("");
   const cut = Math.max(head.lastIndexOf("。"), head.lastIndexOf("！"), head.lastIndexOf("？"));
-  return cut > MAX_SPEECH * 0.5 ? head.slice(0, cut + 1) : head + "…";
+  return cut > max * 0.5 ? head.slice(0, cut + 1) : head + "…";
 }
 
 const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -151,16 +153,19 @@ export function newState({ watch, humanName, role }) {
   const players = entries.map((e, i) => ({
     seat: i + 1, name: e.name, persona: e.persona, human: e.human, role: roles[i],
     alive: true, co: "", secrets: [], thoughts: [], voice: null,
+    known: {},   // 占い・霊媒で分かった結果（席番号 → 白 / 黒）。画面で名前の色を変えるのに使う
   }));
   const wolves = players.filter(isWolf);
   for (const w of wolves) w.secrets.push("仲間の人狼: " + wolves.filter((x) => x !== w).map(label).join("、"));
   for (const seer of players.filter((p) => p.role === "占い師")) {
     const w = pick(players.filter((p) => p !== seer && !isWolf(p)));
     seer.secrets.push(`お告げ: ${label(w)} は人狼ではない`);
+    seer.known[w.seat] = "白";
   }
   return {
-    watch, players, day: 1, phase: "day", events: [], reports: [], executed: [], attacked: [],
+    id: Date.now(), watch, players, day: 1, phase: "night", events: [], reports: [], executed: [], attacked: [],
     lastGuard: null, over: false, winner: null, speaking: null, pending: null,
+    topSeat: 1 + Math.floor(Math.random() * players.length),   // 1 日目のトップバッターはランダム
     cursor: { stage: "start" },
   };
 }
@@ -201,17 +206,21 @@ export class Game {
 
   // --- 人間とのやりとり
 
-  waitHuman(kind, prompt, options = []) {
-    this.S.pending = { kind, prompt, options };
+  // seconds は発言の持ち時間（speak のときだけ）
+  waitHuman(kind, prompt, options = [], seconds = 0) {
+    this.S.pending = { kind, prompt, options, seconds };
     this.ui.update();
     return new Promise((resolve) => { this.resolveHuman = resolve; });
   }
 
-  submit(value) {
+  // elapsed は発言にかかった秒数（早く切り上げたことを AI にも伝えるため）
+  submit(value, elapsed = null) {
     const p = this.S.pending;
     if (!p || !this.resolveHuman) return false;
-    if (p.kind === "speak") value = String(value ?? "").trim().slice(0, 300);
-    else if (!p.options.includes(value)) return false;
+    if (p.kind === "speak") {
+      value = String(value ?? "").trim().slice(0, 600);
+      this.lastElapsed = elapsed;
+    } else if (!p.options.includes(value)) return false;
     this.S.pending = null;
     const r = this.resolveHuman; this.resolveHuman = null;
     r(value);
@@ -335,7 +344,7 @@ ${p.persona.text}
     return candidates.slice().sort((a, b) => b.name.length - a.name.length).find((c) => text.includes(c.name)) || null;
   }
 
-  async aiSpeak(p, task) {
+  async aiSpeak(p, task, maxChars = charsFor(60)) {
     const text = await this.ask(p, task + `
 
 次の形式で答えて:
@@ -362,7 +371,7 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     }
     let speech = f["発言"] || text.trim();
     speech = speech.replace(new RegExp(`^[「『]?(?:${p.seat}番)?${p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[」』]?[:：]?`), "").trim().replace(/^「|」$/g, "");
-    return clip(speech) || "……";
+    return clip(speech, maxChars) || "……";
   }
 
   async aiChoose(p, task, candidates) {
@@ -377,10 +386,12 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     // 何周目か・発言順のどこかに合わせた指示
     const pos = index === 0 ? "トップバッター（最初）" : index === 1 ? "2 番手（トップの次）" : index >= total - 2 ? "エンドポジ（最後のほう）" : "中盤";
     let task = `いまは ${this.S.day} 日目の昼、話し合い ${round} 周目で、あなたの番です。今日の発言順で ${index + 1}/${total} 番目、${pos}の席です。\n`;
+    const sec = ROUND_SECONDS[round - 1];
     task += round === 1
-      ? "1 周目なので、セオリーの「1 周目」と、あなたの席の位置の型に沿って話して（短め、30〜40 秒くらいの量）。役職を CO するならここ。"
-      : "2 周目なので、占いの真偽の判断と、今日投票したい人を 1〜2 人、席番号ではっきり言って（長めでよいが 60 秒以内）。";
-    task += `\n発言時間は最大 60 秒。読み上げて 60 秒以内に収まる長さ（${MAX_SPEECH} 字まで）にすること。`;
+      ? `1 周目なので、セオリーの「1 周目」と、あなたの席の位置の型に沿って話して。持ち時間は ${sec} 秒で、使い切るのが基本（早く切り上げると情報を出していないと見られる）。役職を CO するならここ。`
+      : `2 周目なので、占いの真偽の判断と、今日投票したい人を 1〜2 人、席番号ではっきり言って。持ち時間は ${sec} 秒。`;
+    task += `
+読み上げて ${sec} 秒以内に収まる長さ（${charsFor(sec)} 字まで）にすること。`;
     if (this.S.day >= 2) task += "\n2 日目以降なので、昨日の投票先と、昨夜誰が噛まれたかを推理の材料にして。";
     task += "\n前の人たちと同じ主張をそのまま繰り返さない。賛成なら一言で済ませ、まだ誰も言っていない材料や視点を 1 つ足す。"
       + "あなたのキャラクターとしての立場を持ち、違うと思ったらはっきり反対してよい。言いたいことは 1 つか 2 つに絞る。";
@@ -419,13 +430,20 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
   }
 
   async stepStart() {
+    // 初日の夜: 役職が配られ、占い師にはお告げが届く。襲撃はない
+    this.setPhase("night", "初日の夜");
+    this.emit("sys", { text: "夜になりました。役職が配られました" });
+    await this.ui.waitPresenter(0);
+    await new Promise((r) => setTimeout(r, 5000));
+    if (this.stopped) return;
     this.setPhase("day", "1日目 朝");
-    this.emit("sys", { text: "村に人狼がまぎれこんだらしい。話し合いを始めよう", line: "1日目 朝: 話し合い開始" });
+    this.emit("sys", { text: "朝が来ました。初日の襲撃はありません", line: "1日目 朝: 初日の襲撃はなし。話し合い開始" });
     this.S.cursor = { stage: "talk", round: 1, idx: 0, announced: false };
   }
 
   todaysOrder() {
-    const n = this.S.players.length, start = (this.S.day - 1) % n;
+    // トップバッターは 1 日目はランダム、2 日目以降は噛まれた人の次の席（時計回り）
+    const n = this.S.players.length, start = ((this.S.topSeat || 1) - 1) % n;
     return Array.from({ length: n }, (_, k) => this.S.players[(start + k) % n]);
   }
 
@@ -443,11 +461,16 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
       if (this.stopped) return;
       this.S.speaking = p.seat;
       this.ui.update();
+      const sec = ROUND_SECONDS[c.round - 1];
+      this.lastElapsed = null;
       const speech = p.human
-        ? (await this.waitHuman("speak", "あなたの番です。発言してください（空のまま送ると黙ります）")) ?? null
-        : await this.aiSpeak(p, this.speechTask(c.round, aliveOrder.indexOf(p), aliveOrder.length));
+        ? (await this.waitHuman("speak", "あなたの発言です", [], sec)) ?? null
+        : await this.aiSpeak(p, this.speechTask(c.round, aliveOrder.indexOf(p), aliveOrder.length), charsFor(sec));
       if (this.stopped || speech === null) return;
-      this.emit("say", { text: speech || "……", seat: p.seat, summary: p.human ? "" : this.lastSummary, line: `${this.S.day}日目 ${label(p)}: 「${speech || "……"}」` });
+      // 持ち時間をあまり使わずに切り上げたら、それも AI に見える記録に残す
+      const early = p.human && this.lastElapsed != null && this.lastElapsed < sec * 0.4
+        ? `（持ち時間 ${sec} 秒のうち ${this.lastElapsed} 秒で発言を終えた）` : "";
+      this.emit("say", { text: speech || "……", seat: p.seat, summary: p.human ? "" : this.lastSummary, line: `${this.S.day}日目 ${label(p)}: 「${speech || "……"}」${early}` });
     }
     c.idx++;
     if (c.idx >= order.length) {
@@ -503,15 +526,18 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     this.S.speaking = t.seat;
     this.ui.update();
     const last = t.human
-      ? await this.waitHuman("speak", "処刑されます。最後に一言どうぞ")
-      : await this.aiSpeak(t, "あなたは投票で処刑されることになりました。最後に一言どうぞ。");
+      ? await this.waitHuman("speak", "処刑されます。最後に一言どうぞ", [], LASTWORD_SECONDS)
+      : await this.aiSpeak(t, `あなたは投票で処刑されることになりました。最後に一言どうぞ（${LASTWORD_SECONDS} 秒以内）。`, charsFor(LASTWORD_SECONDS));
     if (this.stopped || last === null) return;
     this.emit("say", { text: last || "……", seat: t.seat, summary: t.human ? "" : this.lastSummary, line: `${this.S.day}日目 ${label(t)}（遺言）: 「${last || "……"}」` });
     this.S.speaking = null;
     t.alive = false;
     this.S.executed.push([this.S.day, label(t)]);
     const result = isWolf(t) ? "人狼だった" : "人狼ではなかった";
-    for (const m of this.alive().filter((p) => p.role === "霊媒師")) m.secrets.push(`${this.S.day}日目: 処刑された ${label(t)} は${result}（霊媒結果）`);
+    for (const m of this.alive().filter((p) => p.role === "霊媒師")) {
+      m.secrets.push(`${this.S.day}日目: 処刑された ${label(t)} は${result}（霊媒結果）`);
+      m.known[t.seat] = isWolf(t) ? "黒" : "白";
+    }
     this.ui.update();
     const w = this.winnerNow();
     if (w) { await this.ui.waitPresenter(0); this.finish(w); } else this.S.cursor = { stage: "night" };
@@ -543,7 +569,10 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     if (this.stopped) return;
 
     for (const [p, t] of picks) {
-      if (p.role === "占い師") p.secrets.push(`${this.S.day}日目夜: 占い結果 ${label(t)} は${isWolf(t) ? "人狼" : "人狼ではない"}`);
+      if (p.role === "占い師") {
+        p.secrets.push(`${this.S.day}日目夜: 占い結果 ${label(t)} は${isWolf(t) ? "人狼" : "人狼ではない"}`);
+        p.known[t.seat] = isWolf(t) ? "黒" : "白";
+      }
       this.emit("secret", { text: `${p.name}（${p.role}）→ ${t.name}`, seat: p.seat, priv: true });
     }
     const wolfPicks = [...picks].filter(([p]) => isWolf(p));
@@ -557,11 +586,14 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     await new Promise((r) => setTimeout(r, 2500));
     this.S.day++;
     this.setPhase("day", `${this.S.day}日目 朝`);
+    const n = this.S.players.length;
     if (guard === victim) {
+      this.S.topSeat = (this.S.topSeat || 1) % n + 1;
       for (const k of alive.filter((p) => p.role === "騎士")) k.secrets.push(`${this.S.day - 1}日目夜: ${label(victim)} を守り、襲撃を防いだ`);
       this.emit("sys", { text: "昨夜は誰も死ななかった", line: `${this.S.day}日目 朝: 昨夜は誰も死ななかった` });
     } else {
       victim.alive = false;
+      this.S.topSeat = victim.seat % n + 1;
       this.S.attacked.push([this.S.day, label(victim)]);
       this.emit("death", { text: `${victim.name} が無残な姿で見つかりました`, seat: victim.seat, line: `${this.S.day}日目 朝: ${label(victim)} が襲撃されて死んでいた` });
     }
