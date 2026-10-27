@@ -70,12 +70,27 @@ export class Voice {
     }
   }
 
-  // スマホでは、ボタンを押したときに一度音を鳴らしておかないと、あとで音が出せない
+  // スマホ（特に iPhone）は、画面をタップした直後でないとページが音を鳴らすのを断ることがある。
+  // タップしたときに Web Audio を起こしておくと、そのあとは断られずに鳴らせる。タップのたびに呼んでよい
   unlock() {
     try {
-      this.audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-      this.audio.play().catch(() => {});
-      if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !this.ctx) this.ctx = new AC();
+      if (this.ctx) {
+        if (this.ctx.state !== "running") this.ctx.resume().catch(() => {});
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.ctx.createBuffer(1, 1, 22050);
+        src.connect(this.ctx.destination);
+        src.start(0);
+      }
+      // iPhone のマナーモードでも PC の声が聞こえるようにする（対応している端末だけ）
+      if (navigator.audioSession) navigator.audioSession.type = "playback";
+      if (!this.unlockedOnce) {
+        this.unlockedOnce = true;
+        this.audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+        this.audio.play().catch(() => {});
+        if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+      }
     } catch {}
   }
 
@@ -105,6 +120,7 @@ export class Voice {
 
   stopAudio() {
     this.speakToken = (this.speakToken || 0) + 1;   // 1 文ずつ読んでいる途中なら、残りも読まない
+    try { this.source?.stop(); } catch {}
     try { this.audio.pause(); } catch {}
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
@@ -227,9 +243,42 @@ export class Voice {
     }
   }
 
-  // 再生できたら true。断られたら false（呼び出し側がスマホの声で読み直す）
-  playUrl(url, player) {
+  // 再生できたら true。断られたら false（呼び出し側がスマホの声で読み直す）。
+  // まず Web Audio で鳴らし（iPhone でも断られにくい）、だめならふつうの音声で鳴らす
+  async playUrl(url, player) {
     this.onSpeaking(player, player.voice.vvName);
+    if (this.ctx) {
+      const ok = await this.playWebAudio(url).catch(() => null);
+      if (ok !== null) { URL.revokeObjectURL(url); return ok; }
+    }
+    return this.playElement(url);
+  }
+
+  async playWebAudio(url) {
+    const ctx = this.ctx, token = this.speakToken;
+    if (ctx.state !== "running") await Promise.race([ctx.resume(), sleep(1500)]);
+    if (ctx.state !== "running") return null;                       // 起こせなかった → ふつうの音声で試す
+    const data = await (await fetch(url)).arrayBuffer();
+    const buf = await new Promise((res, rej) => ctx.decodeAudioData(data, res, rej));
+    if (token !== this.speakToken) return true;                     // 飛ばされた
+    return new Promise((resolve) => {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      this.source = src;
+      let finished = false;
+      const done = (ok) => { if (finished) return; finished = true; clearInterval(watch); if (this.source === src) this.source = null; resolve(ok); };
+      src.onended = () => done(true);
+      // ほかの音や通知で止められたら（中断状態になったら）、起こし直す
+      const watch = setInterval(() => {
+        if (token !== this.speakToken) { try { src.stop(); } catch {} done(true); return; }
+        if (ctx.state !== "running") ctx.resume().catch(() => {});
+      }, 500);
+      src.start(0);
+    });
+  }
+
+  playElement(url) {
     const a = this.audio, token = this.speakToken;
     return new Promise((resolve) => {
       let finished = false, retries = 0;

@@ -9,7 +9,7 @@
 //
 // 進み具合（state）は 1 手ごとにブラウザに保存するので、ページを閉じても続きから再開できる。
 
-import { randomCast } from "./people.js?v=2026-10-27g";
+import { randomCast } from "./people.js?v=2026-10-27h";
 
 export const MODEL = "claude-opus-5-5";
 const EFFORT = "medium";
