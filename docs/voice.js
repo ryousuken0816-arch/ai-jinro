@@ -152,12 +152,24 @@ export class Voice {
     this.skip = null;
   }
 
-  // 1 文ずつ（短い文はまとめて 100 字くらいずつ）に分ける
-  static chunks(text) {
-    const parts = text.match(/[^。！？!?\n]+[。！？!?\n]*/g) || [text];
+  // 1 文ずつ（短い文はまとめて max 字くらいずつ）に分ける。
+  // 「。」のない長い文は読点「、」のところでも分ける（長いかたまりは読み上げが途中で止まることがあるため）
+  static chunks(text, max = 100) {
+    const sentences = (text.match(/[^。！？!?\n]+[。！？!?\n]*/g) || [text]).map((x) => x.trim()).filter(Boolean);
+    const pieces = [];
+    for (const s of sentences) {
+      if (s.length <= max) { pieces.push(s); continue; }
+      let cur = "";
+      for (const c of s.match(/[^、，,]+[、，,]*/g) || [s]) {
+        if (cur && (cur + c).length > max) { pieces.push(cur); cur = ""; }
+        cur += c;
+        while (cur.length > max) { pieces.push(cur.slice(0, max)); cur = cur.slice(max); }
+      }
+      if (cur) pieces.push(cur);
+    }
     const out = [];
-    for (const p of parts.map((x) => x.trim()).filter(Boolean)) {
-      if (out.length && (out[out.length - 1] + p).length <= 100) out[out.length - 1] += p;
+    for (const p of pieces) {
+      if (out.length && (out[out.length - 1] + p).length <= max) out[out.length - 1] += p;
       else out.push(p);
     }
     return out.length ? out : [text];
@@ -208,7 +220,7 @@ export class Voice {
   // 1 文ずつに分けて順に読む
   async speakDevice(text, player) {
     if (!("speechSynthesis" in window)) return sleep(Math.min(2000 + text.length * 90, 12000));
-    const parts = text.match(/[^。！？!?\n]+[。！？!?\n]*/g) || [text];
+    const parts = Voice.chunks(text, 50);
     const token = (this.speakToken = (this.speakToken || 0) + 1);
     for (const part of parts) {
       if (token !== this.speakToken) return;    // 飛ばされた

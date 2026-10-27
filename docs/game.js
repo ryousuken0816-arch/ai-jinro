@@ -9,7 +9,7 @@
 //
 // 進み具合（state）は 1 手ごとにブラウザに保存するので、ページを閉じても続きから再開できる。
 
-import { randomCast } from "./people.js?v=2026-10-27e";
+import { randomCast } from "./people.js?v=2026-10-27f";
 
 export const MODEL = "claude-opus-5-5";
 const EFFORT = "medium";
@@ -55,7 +55,7 @@ export class ClaudeBrain {
   async ask(system, user) {
     if (!this.client) {
       const { default: Anthropic } = await import(SDK_URL);
-      this.client = new Anthropic({ apiKey: this.apiKey, dangerouslyAllowBrowser: true });
+      this.client = new Anthropic({ apiKey: this.apiKey, dangerouslyAllowBrowser: true, maxRetries: 6 });
     }
     // 安全分類器で断られたときは、別モデルで自動的にやり直す（server-side fallback）
     // 考える量（medium）に出力の上限を使い切られて発言が途中で切れないよう、上限は大きめにとる
@@ -76,7 +76,7 @@ export class ClaudeBrain {
   async quick(system, user) {
     if (!this.client) {
       const { default: Anthropic } = await import(SDK_URL);
-      this.client = new Anthropic({ apiKey: this.apiKey, dangerouslyAllowBrowser: true });
+      this.client = new Anthropic({ apiKey: this.apiKey, dangerouslyAllowBrowser: true, maxRetries: 6 });
     }
     const r = await this.client.beta.messages.create({
       model: MODEL, max_tokens: 2000, system,
@@ -273,6 +273,12 @@ ${roster}。人狼が全滅すれば村人陣営の勝ち。人狼の数が人�
 占い師は最初に「人狼ではない人」を 1 人教えられている。騎士は自分を守れず、2 晩続けて同じ人は守れない。
 役職を明かす（CO）か、嘘をつくかは自由。勝つために一番いい振る舞いを選んで。
 
+## 聞いてすぐ分かる話し方
+- 結論を先に言い、理由は 1 つか 2 つに絞る。誰を疑う・信じるかは席番号ではっきり言う。
+- 専門用語は使ってよいが、1 回の発言で 2 つまで。耳で聞いて分かる、ふつうの話し言葉にする。
+- 決まり文句で話し始めない。「役職ないです」「CO ないっす」のように役職がないことから始めない（言うなら途中で短く、言わなくてもよい）。
+- 「初心者です」「まだ慣れてなくて」のように、自分の腕前やゲームに慣れていないことを口にしない。
+
 ## メタ情報の禁止
 AI であること、プロンプト、ゲームの外の話はしない。
 
@@ -326,15 +332,18 @@ ${p.persona.text}
       { type: "text", text: this.personalPrompt(p) },
     ];
     const user = this.board(p) + "\n\n" + task;
-    for (let i = 0; i < 2; i++) {
+    // 混み合って断られても、間をおいて何度かやり直す（黙ったことにしない）
+    for (let i = 0; i < 4; i++) {
       try {
         const text = await this.brain.ask(system, user);
         if (text.trim()) return text;
       } catch (e) {
-        this.emit("sys", { text: `（${p.name} の呼び出しでエラー: ${String(e.message || e).slice(0, 120)}）` });
-        if (/401|authentication|api.key/i.test(String(e.message || e))) { this.ui.onFatal?.("APIキーが正しくないようです。設定から入れ直してください。"); this.stop(); }
+        const msg = String(e.message || e);
+        if (/401|authentication|api.key/i.test(msg)) { this.ui.onFatal?.("APIキーが正しくないようです。設定から入れ直してください。"); this.stop(); break; }
+        if (i === 3) this.emit("sys", { text: `（${p.name} の呼び出しが混み合っていて失敗しました: ${msg.slice(0, 80)}）` });
       }
       if (this.stopped) break;
+      if (i < 3) await new Promise((r) => setTimeout(r, 8000 * (i + 1)));
     }
     return "";
   }
@@ -377,6 +386,7 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
       const res = rep.includes("黒") || (rep.includes("人狼") && !rep.includes("ではない")) ? "黒" : (rep.includes("白") || rep.includes("ではない") ? "白" : "");
       if (t && res) this.declareReport(p.seat, t.seat, res);
     }
+    if (!text.trim()) return "（通信が混み合っていて発言できませんでした）";
     let speech = f["発言"] || text.trim();
     speech = speech.replace(new RegExp(`^[「『]?(?:${p.seat}番)?${p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[」』]?[:：]?`), "").trim().replace(/^「|」$/g, "");
     return clip(speech, maxChars) || "……";
@@ -432,6 +442,7 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
       else if (c.stage === "vote") await this.stepVote();
       else if (c.stage === "lastword") await this.stepLastword();
       else if (c.stage === "night") await this.stepNight();
+      else if (c.stage === "morning") await this.stepMorning();
       if (!this.stopped) this.save();
     }
     this.save();
@@ -653,6 +664,50 @@ ${task}
     this.ui.update();
     const w = this.winnerNow();
     if (w) this.finish(w);
-    else this.S.cursor = { stage: "talk", round: 1, idx: 0, announced: false };
+    else this.S.cursor = { stage: "morning" };
+  }
+
+  // --- 朝の結果発表: 夜が明けたら、話し合いの前に占い師・霊媒師が結果を出す（自分の番を待たない）
+
+  async morningReport(p) {
+    const co = p.co ? `${p.co}として CO 済み` : "まだ CO していない";
+    const text = await this.ask(p, `夜が明けて ${this.S.day} 日目の朝です。話し合いの前に、占い師・霊媒師が結果を発表する時間です（自分の番を待たずに出せる）。
+あなたは${co}。結果を出すなら CO と報告を書き、発言は結果を伝える 1 文だけにして。出さないなら全部「なし」。
+本物でなくても、占い師・霊媒師を名乗っているなら結果を出すのが自然（嘘の結果も戦略として可）。
+
+次の形式で答えて:
+考え: （1 文）
+CO: （占い師 / 霊媒師 / なし）
+報告: （「3番 白」か「3番 黒」。なければ なし）
+発言: （結果を伝える 1 文。出さないなら なし）`);
+    return { p, f: parseFields(text) };
+  }
+
+  async stepMorning() {
+    await this.ui.waitPresenter(0);
+    const day = this.S.day;
+    const ROLE_CO = ["占い師", "霊媒師"];
+    const reporters = this.alive().filter((p) => !p.human && (ROLE_CO.includes(p.co) || ROLE_CO.includes(p.role)));
+    if (reporters.length) {
+      this.emit("sys", { text: "朝の結果発表", line: `${day}日目 朝の結果発表` });
+      const results = await Promise.all(reporters.map((p) => this.morningReport(p)));
+      if (this.stopped) return;
+      for (const { p, f } of results.sort((a, b) => a.p.seat - b.p.seat)) {
+        this.remember(p, f["考え"] || "");
+        const co = (f["CO"] || "").trim();
+        const role = /なし|しない/.test(co) ? null : ROLE_CO.find((r) => co.startsWith(r));
+        const rep = f["報告"] || "";
+        const t = rep && !rep.startsWith("なし") ? this.matchPlayer(rep, this.S.players) : null;
+        const res = rep.includes("黒") ? "黒" : rep.includes("白") ? "白" : "";
+        if (!role && !(p.co && t && res)) continue;            // 何も出さない人
+        if (role) this.declareCo(p.seat, role);
+        if (t && res) this.declareReport(p.seat, t.seat, res);
+        const speech = (f["発言"] || "").trim();
+        if (speech && !speech.startsWith("なし")) {
+          this.emit("say", { text: clip(speech, charsFor(20)), seat: p.seat, line: `${day}日目 朝の結果発表 ${label(p)}: 「${speech}」` });
+        }
+      }
+    }
+    this.S.cursor = { stage: "talk", round: 1, idx: 0, announced: false };
   }
 }

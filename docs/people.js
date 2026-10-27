@@ -133,7 +133,7 @@ const D = {
     "初心者",
     "初心者"
    ],
-   "speech": "一人称は「私」か「僕」。素朴で丁寧な口調。「すみません、まだ慣れてなくて」。",
+   "speech": "一人称は「私」か「僕」。素朴で丁寧な口調。言葉に詰まりがちで、短く話す。",
    "play": "何を話せばいいか分からず短く終わりがち。2 番手でも「特に話すことないです」で切ってしまい、疑われやすい。",
    "role": "役職を引くと CO のタイミングに迷う。人狼だと緊張して口数が減る。",
    "length": "短め。1〜2 文で終わることが多い。"
@@ -404,11 +404,14 @@ export function randomNames(n) {
 }
 
 export function randomCast(n) {
+  // 1 つの村で同じ性格タイプが重ならないよう、タイプは重みつきで「取り出していく」
+  const pool = D.TYPES.slice();
   return randomNames(n).map((name) => {
-    // 腕前を先に 4:4:2 で決め、その腕前になりやすいタイプから選ぶ
-    const skill = weighted(Object.keys(D.SKILL_WEIGHT), (s) => D.SKILL_WEIGHT[s]);
-    const fits = D.TYPES.filter((t) => t.skills.includes(skill));
-    const t = weighted(fits, (x) => x.weight * x.skills.filter((s) => s === skill).length);
+    if (!pool.length) pool.push(...D.TYPES);
+    const t = weighted(pool, (x) => x.weight);
+    pool.splice(pool.indexOf(t), 1);
+    // 腕前はそのタイプになりやすい腕前から、全体の割合（4:4:2）も効かせて選ぶ
+    const skill = weighted([...new Set(t.skills)], (s) => D.SKILL_WEIGHT[s] * t.skills.filter((x) => x === s).length);
     const text = `タイプ: ${t.type}（腕前: ${skill}。${D.SKILL_TEXT[skill]}）
 `
       + `話し方: ${t.speech}
