@@ -32,9 +32,10 @@ export const ROUND_SECONDS = [60, 90];
 export const LASTWORD_SECONDS = 45;
 const charsFor = (sec) => Math.round(sec * 4.2);
 
-// 長すぎる発言は、上限の字数までの最後の句点で切る
+// 長すぎる発言は、上限の字数までの最後の句点で切る（少し超えたくらいなら切らない）
 function clip(text, max) {
-  if ([...text].length <= max) return text;
+  if ([...text].length <= max * 1.4) return text;
+  max = Math.round(max * 1.4);
   const head = [...text].slice(0, max).join("");
   const cut = Math.max(head.lastIndexOf("。"), head.lastIndexOf("！"), head.lastIndexOf("？"));
   return cut > max * 0.5 ? head.slice(0, cut + 1) : head + "…";
@@ -57,9 +58,10 @@ export class ClaudeBrain {
       this.client = new Anthropic({ apiKey: this.apiKey, dangerouslyAllowBrowser: true });
     }
     // 安全分類器で断られたときは、別モデルで自動的にやり直す（server-side fallback）
+    // 考える量（medium）に出力の上限を使い切られて発言が途中で切れないよう、上限は大きめにとる
     const r = await this.client.beta.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 16000,
       system,
       messages: [{ role: "user", content: user }],
       output_config: { effort: EFFORT },
@@ -162,8 +164,14 @@ export function newState({ watch, humanName, role }) {
     seer.secrets.push(`お告げ: ${label(w)} は人狼ではない`);
     seer.known[w.seat] = "白";
   }
+  // 観戦のときは、誰か 1 人の視点で見る（選んだ役職の人、なければランダム）
+  let viewSeat = null;
+  if (watch) {
+    const cands = role ? players.filter((p) => p.role === role) : players;
+    viewSeat = pick(cands.length ? cands : players).seat;
+  }
   return {
-    id: Date.now(), watch, players, day: 1, phase: "night", events: [], reports: [], executed: [], attacked: [],
+    id: Date.now(), watch, viewSeat, players, day: 1, phase: "night", events: [], reports: [], executed: [], attacked: [],
     lastGuard: null, over: false, winner: null, speaking: null, pending: null,
     topSeat: 1 + Math.floor(Math.random() * players.length),   // 1 日目のトップバッターはランダム
     cursor: { stage: "start" },

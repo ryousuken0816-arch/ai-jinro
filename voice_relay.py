@@ -81,7 +81,15 @@ def main():
     KEY = os.environ.get("VOICE_KEY", "")
     if len(KEY) < 16:
         raise SystemExit("VOICE_KEY（16 文字以上）が必要です。起動.bat から起動してください。")
-    ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    try:
+        Server(("127.0.0.1", args.port), Handler).serve_forever()
+    except OSError:
+        raise SystemExit(f"{args.port} 番がほかのプログラムに使われています。前に開いた起動.bat の窓を閉じてから、もう一度起動してください。")
+
+
+class Server(ThreadingHTTPServer):
+    # Windows では同じ番号を複数のプログラムで取り合えてしまい、古い中継に頼みが届くことがある。それを防ぐ
+    allow_reuse_address = False
 
 
 if __name__ == "__main__":

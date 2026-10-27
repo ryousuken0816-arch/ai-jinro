@@ -102,6 +102,7 @@ export class Voice {
   }
 
   stopAudio() {
+    this.speakToken = (this.speakToken || 0) + 1;   // 1 文ずつ読んでいる途中なら、残りも読まない
     try { this.audio.pause(); } catch {}
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
@@ -141,8 +142,8 @@ export class Voice {
     } else {
       speaking = this.speakDevice(text, item.player);
     }
-    // 発言時間は最大 60 秒。それを過ぎたら読み上げを止めて次の人へ
-    const limit = sleep(60_000).then(() => this.stopAudio());
+    // 持ち時間（最大 90 秒）を過ぎたら読み上げを止めて次の人へ。読み上げの速さの差で切れないよう少し余裕をみる
+    const limit = sleep(100_000).then(() => this.stopAudio());
     await Promise.race([speaking, skipped, limit]);
     this.skip = null;
   }
@@ -155,9 +156,12 @@ export class Voice {
         body: JSON.stringify({ text, speaker }),
       });
       if (!r.ok) throw new Error(String(r.status));
+      this.vvFails = 0;
       return URL.createObjectURL(await r.blob());
     } catch {
-      this.vvOk = false;  // PC が切れたら、以降はスマホの声に切り替える
+      // 1 回の失敗ではあきらめず、3 回続いたら PC が切れたとみなしてスマホの声に切り替える
+      this.vvFails = (this.vvFails || 0) + 1;
+      if (this.vvFails >= 3) { this.vvOk = false; this.onStatus?.("PC の声につながらないので、スマホの声に切り替えました"); }
       return null;
     }
   }
@@ -173,8 +177,20 @@ export class Voice {
     });
   }
 
-  speakDevice(text, player) {
-    if (!("speechSynthesis" in window)) return sleep(Math.min(1500 + text.length * 60, 7000));
+  // スマホの読み上げは、長い文を一度に読ませると途中で止まることがある（ブラウザの既知の不具合）。
+  // 1 文ずつに分けて順に読む
+  async speakDevice(text, player) {
+    if (!("speechSynthesis" in window)) return sleep(Math.min(2000 + text.length * 90, 12000));
+    const parts = text.match(/[^。！？!?\n]+[。！？!?\n]*/g) || [text];
+    const token = (this.speakToken = (this.speakToken || 0) + 1);
+    for (const part of parts) {
+      if (token !== this.speakToken) return;    // 飛ばされた
+      await this.speakOne(part.trim(), player);
+    }
+  }
+
+  speakOne(text, player) {
+    if (!text) return Promise.resolve();
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "ja-JP";
@@ -182,8 +198,8 @@ export class Voice {
       const v = player.voice || { dev: player.seat, pitch: 1, rate: 1 };
       if (voices.length) u.voice = voices[v.dev % voices.length];
       u.pitch = v.pitch; u.rate = v.rate;
-      // 端末によっては終わりの合図が来ないので、長さから見積もった時間でも打ち切る
-      const timer = setTimeout(resolve, 2000 + text.length * 250);
+      // 端末によっては終わりの合図が来ないので、長さから見積もった時間でも次へ進む
+      const timer = setTimeout(resolve, 3000 + text.length * 300);
       u.onend = u.onerror = () => { clearTimeout(timer); resolve(); };
       speechSynthesis.speak(u);
     });

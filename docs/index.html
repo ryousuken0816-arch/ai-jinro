@@ -11,7 +11,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
-button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid #4a5468; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button { white-space: nowrap; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid #4a5468; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: default; }
 input { font: inherit; }
@@ -30,7 +30,8 @@ input { font: inherit; }
 .lab { position: absolute; transform: translate(-50%, -100%); text-align: center; white-space: nowrap; pointer-events: auto; cursor: default; }
 .lab .nm { font-size: 15px; font-weight: bold; text-shadow: 0 0 3px #000, 0 1px 3px #000; }
 .lab .no { display: inline-block; color: var(--accent); font-size: 20px; font-weight: 900; font-style: italic; margin-right: 6px; text-shadow: 0 0 3px #000, 0 1px 3px #000; }
-.lab .tag { display: inline-block; margin-top: 2px; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--blue); color: #0d1a2a; font-weight: bold; }
+.lab .tag { display: inline-block; margin-left: 4px; font-size: 11px; padding: 0 5px; border-radius: 5px; background: var(--blue); color: #0d1a2a; font-weight: bold; vertical-align: 1px; text-shadow: none; }
+.lab .me { display: inline-block; margin-left: 4px; font-size: 10px; padding: 0 4px; border-radius: 4px; background: var(--accent); color: #1d2230; vertical-align: 1px; text-shadow: none; }
 .lab .tag.role { background: var(--accent); }
 .lab .think { display: inline-block; font-size: 12px; background: rgba(20, 24, 34, .85); padding: 1px 8px; border-radius: 8px; color: var(--muted); margin-bottom: 2px; }
 .lab.dead { opacity: .5; }
@@ -40,7 +41,7 @@ input { font: inherit; }
 .lab .nmtext { display: inline-block; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* いまの発言は画面上部に字幕で出す（頭の上の吹き出しだと名前と重なるため） */
-#caption { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); width: min(720px, calc(100% - 24px)); background: rgba(255, 253, 247, .95);
+#caption { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); width: min(720px, calc(100% - 24px)); background: rgba(255, 253, 247, .95);
   color: #1d2230; padding: 8px 14px; border-radius: 12px; font-size: 15px; line-height: 1.55; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); cursor: pointer;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 #caption.full { -webkit-line-clamp: unset; max-height: 60vh; overflow-y: auto; }
@@ -51,7 +52,7 @@ input { font: inherit; }
 #labels { z-index: 1; }
 #top, #caption, #bottom, #log, #votes { z-index: 10; }
 .modal { z-index: 20; }
-#toast { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 15; background: rgba(20, 24, 34, .92); border: 1px solid #4a5468;
+#toast { position: absolute; left: 50%; top: 48px; transform: translateX(-50%); z-index: 15; background: rgba(20, 24, 34, .92); border: 1px solid #4a5468;
   border-radius: 8px; padding: 6px 14px; font-size: 13px; pointer-events: none; opacity: 0; transition: opacity .3s; white-space: nowrap; }
 #toast.show { opacity: 1; }
 .rolegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
@@ -179,7 +180,7 @@ input { font: inherit; }
 @media (max-height: 520px) and (orientation: landscape) {
   #top { top: 6px; left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); flex-direction: row; align-items: center; gap: 6px; }
   #phase, #hint { font-size: 12px; padding: 4px 10px; }
-  #caption { top: 38px; font-size: 13px; padding: 5px 12px; width: min(640px, 72vw); -webkit-line-clamp: 2; }
+  #caption { font-size: 12px; padding: 4px 12px; width: min(620px, 64vw); -webkit-line-clamp: 2; line-height: 1.45; }
   .lab .nm { font-size: 11px; }
   .lab .no { font-size: 14px; margin-right: 3px; }
   .lab .tag { font-size: 10px; padding: 0 5px; margin-top: 0; }
@@ -224,8 +225,8 @@ input { font: inherit; }
 
   <div id="bottom">
     <div id="leftbtns">
-      <button id="rolebtn">役職確認</button>
-      <button id="logbtn">チャットと履歴</button>
+      <button id="rolebtn">役職</button>
+      <button id="logbtn">履歴</button>
       <button id="settingsbtn">設定</button>
     </div>
     <form id="say"><input id="sayinput" placeholder="発言の順番を待っています" autocomplete="off" enterkeyhint="send" disabled><button type="button" id="micbtn" aria-label="音声入力">🎤</button><button id="saybtn" disabled>発言終了</button></form>
@@ -261,8 +262,8 @@ input { font: inherit; }
 
   <div class="modal" id="roleModal"><div class="card"><div id="rolebody"></div><div class="row"><button data-close>閉じる</button></div></div></div>
   <div class="modal" id="pickRoleModal"><div class="card">
-    <h2>役職を選ぶ</h2>
-    <p style="color:var(--muted);font-size:13px">選んだ役職以外は、AI たちにランダムに配られます。</p>
+    <h2 id="pickRoleTitle">役職を選ぶ</h2>
+    <p id="pickRoleNote" style="color:var(--muted);font-size:13px">選んだ役職以外は、AI たちにランダムに配られます。</p>
     <div class="rolegrid">
       <button data-role="" class="wide"><b>ランダム</b><small>何になるかはお楽しみ</small></button>
       <button data-role="村人"><b>村人</b><small>話し合いで人狼を探す</small></button>
@@ -740,11 +741,15 @@ function render() {
     const nameCls = known === "白" ? " white" : known === "黒" ? " black" : "";
     const memo = memos[p.seat];
     const fresh = coFresh[p.seat] && Date.now() - coFresh[p.seat] < 60_000;   // CO から 60 秒は目立たせる
+    // 頭上は 1 行にまとめる: 番号・名前・CO・メモ（役職は決着してから）。CO は発言が流れてから出す
+    const co = coShown[p.seat]?.role;
+    const short = { "占い師": "占", "霊媒師": "霊", "騎士": "騎", "村人": "村" };
     s.label.innerHTML = (thinking && S.speaking === p.seat ? `<div><span class="think">考え中…</span></div>` : "")
-      + `<div class="nm"><span class="no">${p.seat}</span><span class="nmtext${nameCls}">${esc(p.name)}</span>${isMe ? "（自分）" : ""}${p.alive ? "" : " ✝"}`
-      + (memo ? `<span class="memo m${memo}">${memo}</span>` : "") + `</div>`
-      + (p.co || rv ? `<div>${p.co ? `<span class="tag${fresh ? " fresh" : ""}">${esc(p.co)}CO</span> ` : ""}${rv ? `<span class="tag role">${esc(rv.role)}</span>` : ""}</div>` : "")
-      + (p.alive && stanceShown[p.seat] ? `<div><span class="stance">${esc(stanceShown[p.seat])}</span></div>` : "");
+      + `<div class="nm"><span class="no">${p.seat}</span><span class="nmtext${nameCls}">${esc(p.name)}</span>`
+      + (isMe ? `<span class="me">${S.watch ? "視点" : "自分"}</span>` : "") + (p.alive ? "" : " ✝")
+      + (co ? `<span class="tag${fresh ? " fresh" : ""}">${short[co] || co}CO</span>` : "")
+      + (memo ? `<span class="memo m${memo}">${memo}</span>` : "")
+      + (rv ? `<span class="tag role">${esc(rv.role)}</span>` : "") + `</div>`;
   }
   const alive = S.players.filter((p) => p.alive).length;
   const ph = { day: "昼", vote: "投票", night: "夜", end: "終了" }[S.phase] || "";
@@ -757,9 +762,10 @@ function render() {
   $("#sayinput").placeholder = speak ? "発言を入力（空のまま送ると黙ります）" : (S.me && !S.me.alive ? "あなたは死亡しました（観戦中）" : "発言の順番を待っています");
   const counts = {}; (S.setup || []).forEach((r) => counts[r] = (counts[r] || 0) + 1);
   $("#roster").textContent = Object.entries(counts).map(([r, n]) => `${r.replace("師", "")}${n}`).join(" ");
-  // CO 編集はいつでも（夜のうちにも）セットでき、「COする」は自分の発言の番だけ押せる
-  $("#cobtn").disabled = !S.me || !S.me.alive || S.over;
-  $("#cofire").disabled = !(speak && coReserve);
+  // CO 編集はいつでも（夜のうちにも）セットでき、「COする」は昼のあいだならいつでも押せる（2 周目の始めなど）
+  const canCo = !!S.me && !S.watch && S.me.alive && !S.over;
+  $("#cobtn").disabled = !canCo;
+  $("#cofire").disabled = !(canCo && coReserve && ["day", "vote"].includes(S.phase));
   $("#cofire").classList.toggle("ready", !!coReserve);
   $("#cofire").textContent = coReserve ? `COする（${coLabel(coReserve)}）` : "COする";
   const sel = $("#cotarget"), keep = sel.value;
@@ -803,7 +809,7 @@ function renderCaption() {
   const html = `<b>${lastSpeech.seat ? lastSpeech.seat + " " : ""}${esc(lastSpeech.name)}</b>`
     + (lastSpeech.summary ? `<span class="sum">${esc(lastSpeech.summary)}</span>` : "") + esc(lastSpeech.text);
   if (c.innerHTML !== html) { c.innerHTML = html; c.classList.remove("full"); }
-  c.style.top = ($("#top").offsetTop + $("#top").offsetHeight + 6) + "px";
+  c.style.bottom = (innerHeight - $("#bottom").getBoundingClientRect().top + 8) + "px";
 }
 
 function addLog(e) {
@@ -849,8 +855,10 @@ function showRole() {
     $("#rolebody").innerHTML = S && S.watch ? "<h2>観戦中</h2><p>全員の役職と考えが表示されます。</p>" : "<h2>まだ役職はありません</h2>";
   } else {
     const m = S.me;
-    $("#rolebody").innerHTML = `<h2>あなたは【${esc(m.role)}】</h2><p>${esc(m.team)}。${esc(m.desc)}</p>`
-      + (m.secrets.length ? `<p>あなただけが知っていること:</p><ul class="secret-list">${m.secrets.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : "");
+    const who = S.watch ? `${m.seat}番 ${esc(m.name)} の視点` : "あなた";
+    $("#rolebody").innerHTML = `<h2>${who}は【${esc(m.role)}】</h2><p>${esc(m.team)}。${esc(m.desc)}</p>`
+      + (S.watch ? `<p style="color:var(--muted);font-size:13px">この人が知っていることと、この人の考えだけが見えます。ほかの人の役職は決着まで分かりません。</p>` : "")
+      + (m.secrets.length ? `<p>${S.watch ? "この人" : "あなた"}だけが知っていること:</p><ul class="secret-list">${m.secrets.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : "");
   }
   $("#roleModal").classList.add("open");
 }
@@ -889,11 +897,14 @@ let keyFromQr = false;
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 
+// 本人だけが知っている出来事（考え・夜の行動）は、観戦なら視点の人のものだけ見せる
+function visibleToMe(ev, st) { return !ev.private || (st && st.watch && ev.seat === st.viewSeat); }
+
 // render() などが使う形に、ゲームの状態をまとめる
 function view() {
   const G = game.S;
-  const h = G.players.find((p) => p.human);
-  const showAll = G.watch || G.over;
+  const h = G.players.find((p) => p.human) || (G.watch && G.viewSeat ? G.players[G.viewSeat - 1] : null);
+  const showAll = G.over;
   return {
     ...G, setup: SETUP,
     me: h ? { seat: h.seat, name: h.name, role: h.role, team: ROLES[h.role][0], desc: ROLES[h.role][1], secrets: h.secrets, alive: h.alive, known: h.known || {} } : null,
@@ -904,7 +915,7 @@ function view() {
 function refresh() { if (game) { S = view(); render(); } }
 
 voice.onShow = (ev) => {
-  if (!ev.private || (game && game.S.watch)) addLog(ev);
+  if (visibleToMe(ev, game && game.S)) addLog(ev);
   refresh();
 };
 voice.onSpeaking = (p, vvName) => {
@@ -913,7 +924,12 @@ voice.onSpeaking = (p, vvName) => {
 };
 
 const ui = {
-  onEvent: (ev) => voice.enqueue(ev, ev.seat ? game.S.players[ev.seat - 1] : null),
+  onEvent: (ev) => {
+    const p = ev.seat ? game.S.players[ev.seat - 1] : null;
+    // あなたが押した CO・結果は、AI の発言の順番待ちに並ばずにすぐ出す
+    if (p && p.human && (ev.type === "co" || ev.type === "report")) { voice.onShow(ev); return; }
+    voice.enqueue(ev, p);
+  },
   update: () => refresh(),
   waitPresenter: (n) => voice.waitPresenter(n),
   onFatal: (msg) => { toast(msg, true); openSettings(); },
@@ -945,7 +961,7 @@ async function begin(state, resumed) {
   try { memos = JSON.parse(localStorage.getItem(memoKey()) || "{}"); } catch { memos = {}; }
   if (resumed) {
     // 保存してあった出来事は、声なしでそのまま並べ直す
-    for (const ev of state.events) if (!ev.private || state.watch) addLog(ev);
+    for (const ev of state.events) if (visibleToMe(ev, state)) addLog(ev);
   }
   document.querySelectorAll(".modal").forEach((m) => m.classList.remove("open"));
   updateVoiceStatus();
@@ -1013,15 +1029,27 @@ function showStart() {
 // 「参加してはじめる」→ 役職を選ぶ画面 → 開始
 $("#startbtn").onclick = () => {
   if (!MOCK && !readKey()) { $("#starterr").textContent = "先に「設定」で Claude の APIキーを入れてください。"; return; }
-  $("#startModal").classList.remove("open");
-  $("#pickRoleModal").classList.add("open");
+  openPickRole(false);
 };
 $("#pickRoleModal").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-role]");
-  if (b) start(false, b.dataset.role || null);
+  if (b) start(pickForWatch, b.dataset.role || null);
 });
 $("#pickRoleModal [data-close]").addEventListener("click", () => showStart());
-$("#watchbtn").onclick = () => start(true);
+// 観戦も、誰の視点で見るかを役職で選ぶ（ランダムも可）
+let pickForWatch = false;
+function openPickRole(watch) {
+  pickForWatch = watch;
+  $("#pickRoleTitle").textContent = watch ? "誰の視点で観戦する？" : "役職を選ぶ";
+  $("#pickRoleNote").textContent = watch ? "選んだ役職の人の視点で見ます。その人が知っていることと考えだけが見えます。"
+    : "選んだ役職以外は、AI たちにランダムに配られます。";
+  $("#startModal").classList.remove("open");
+  $("#pickRoleModal").classList.add("open");
+}
+$("#watchbtn").onclick = () => {
+  if (!MOCK && !readKey()) { $("#starterr").textContent = "先に「設定」で Claude の APIキーを入れてください。"; return; }
+  openPickRole(true);
+};
 $("#resumebtn").onclick = () => { const s = loadSaved(); if (s) begin(s, true); };
 $("#againbtn").onclick = () => { $("#endModal").classList.remove("open"); clearSaved(); showStart(); };
 $("#rolebtn").onclick = showRole;
@@ -1070,7 +1098,7 @@ $("#comenu").addEventListener("click", (ev) => {
 $("#cofire").addEventListener("pointerdown", (ev) => ev.preventDefault());
 $("#cofire").onclick = () => {
   const me = game && game.human();
-  if (!me || !coReserve || !game.S.pending || game.S.pending.kind !== "speak") return;
+  if (!me || !me.alive || !coReserve || !["day", "vote"].includes(game.S.phase)) return;
   if (coReserve.role && me.co !== coReserve.role) game.declareCo(me.seat, coReserve.role);
   if (coReserve.target && coReserve.result) game.declareReport(me.seat, coReserve.target, coReserve.result);
   coReserve = null;
