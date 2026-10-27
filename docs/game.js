@@ -114,13 +114,13 @@ export class MockBrain {
       return `考え: なんとなく。\n答え: ${pick(names)}`;
     }
     const co = pick(["なし", "なし", "なし", "なし", "なし", "占い師", "霊媒師", "騎士"]);
-    return `考え: 様子見。\nCO: ${co}\n報告: なし\n発言: ${pick(MockBrain.LINES)}`;
+    return `考え: 様子見。\nCO: ${co}\n報告: なし\n要点: ${pick(["3番が怪しい", "占い真は2番", "今日は5・7ラン", "まだ様子見"])}\n発言: ${pick(MockBrain.LINES)}`;
   }
 }
 
 function parseFields(text) {
   // 「考え: … / CO: … / 報告: … / 発言: … / 答え: …」を取り出す
-  const parts = text.split(/^(考え|CO|報告|発言|答え)[:：]/m);
+  const parts = text.split(/^(考え|CO|報告|要点|発言|答え)[:：]/m);
   const d = {};
   for (let i = 1; i < parts.length - 1; i += 2) d[parts[i]] = parts[i + 1].trim();
   return d;
@@ -185,9 +185,9 @@ export class Game {
   save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.S)); } catch {} }
   stop() { this.stopped = true; if (this.resolveHuman) this.resolveHuman(null); }
 
-  emit(type, { text = "", seat = null, line = "", priv = false } = {}) {
+  emit(type, { text = "", seat = null, line = "", priv = false, summary = "" } = {}) {
     const ev = { id: this.S.events.length + 1, type, day: this.S.day, text, seat,
-      name: seat ? this.bySeat(seat).name : "", private: priv, line };
+      name: seat ? this.bySeat(seat).name : "", private: priv, line, summary };
     this.S.events.push(ev);
     this.ui.onEvent(ev);
     return ev;
@@ -293,6 +293,8 @@ ${p.persona.text}
     const gray = a.filter((q) => !q.co && q !== p && !S.reports.some((r) => r[3] === label(q))).map(label);
     lines.push(`【生存】${a.length}人。グレー（CO なし・未判定）: ${gray.length ? gray.join("、") : "なし"}`);
     lines.push(`【残りの縄の目安】あと ${Math.max(Math.floor((a.length - 1) / 2), 0)} 回吊れる（人狼が減らない場合）。人狼は全部で 2 人`);
+    const stances = S.players.filter((q) => q.alive && q.stance).map((q) => `${label(q)}: ${q.stance}`);
+    if (stances.length) lines.push("【みんなの今の主張（要点）】" + stances.join(" / "));
     if (p.secrets.length) { lines.push("【あなただけが知っていること】"); for (const s of p.secrets) lines.push(`- ${s}`); }
     if (p.thoughts.length) { lines.push("【自分用メモ（前に考えたこと）】"); for (const t of p.thoughts.slice(-5)) lines.push(`- ${t}`); }
     lines.push("【ここまでの発言と出来事】");
@@ -340,11 +342,17 @@ ${p.persona.text}
 考え: （誰にも見えない自分用の整理。盤面を数えて、誰を疑う・信じるか、1〜2 文）
 CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎士 / 村人。しないなら なし）
 報告: （占い・霊媒の結果を報告するなら「3番 白」か「3番 黒」のように。なければ なし。嘘の報告も戦略として可）
+要点: （この発言でいちばん言いたいことを 15 字以内で。例「3番が怪しい」「占い真は2番」「今日は5・7ラン」）
 発言: （みんなに向けた発言。キャラクターの口調で）`);
     const f = parseFields(text);
+    const summary = (f["要点"] || "").replace(/^「|」$/g, "").slice(0, 20);
+    if (summary) p.stance = summary;
+    this.lastSummary = summary;
     this.remember(p, f["考え"] || "");
-    const co = f["CO"] || "";
-    const role = CO_ROLES.find((r) => co.includes(r));
+    // 「CO: なし（村人として振る舞う）」のような書き方を村人 CO と取り違えないよう、
+    // 欄が役職名そのもので始まり、否定の言葉を含まないときだけ CO とみなす
+    const co = (f["CO"] || "").trim();
+    const role = /なし|しない|しません|潜伏|保留/.test(co) ? null : CO_ROLES.find((r) => co.startsWith(r));
     if (role) this.declareCo(p.seat, role);
     const rep = f["報告"] || "";
     if (rep && !rep.startsWith("なし")) {
@@ -374,6 +382,8 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
       : "2 周目なので、占いの真偽の判断と、今日投票したい人を 1〜2 人、席番号ではっきり言って（長めでよいが 60 秒以内）。";
     task += `\n発言時間は最大 60 秒。読み上げて 60 秒以内に収まる長さ（${MAX_SPEECH} 字まで）にすること。`;
     if (this.S.day >= 2) task += "\n2 日目以降なので、昨日の投票先と、昨夜誰が噛まれたかを推理の材料にして。";
+    task += "\n前の人たちと同じ主張をそのまま繰り返さない。賛成なら一言で済ませ、まだ誰も言っていない材料や視点を 1 つ足す。"
+      + "あなたのキャラクターとしての立場を持ち、違うと思ったらはっきり反対してよい。言いたいことは 1 つか 2 つに絞る。";
     return task;
   }
 
@@ -437,7 +447,7 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
         ? (await this.waitHuman("speak", "あなたの番です。発言してください（空のまま送ると黙ります）")) ?? null
         : await this.aiSpeak(p, this.speechTask(c.round, aliveOrder.indexOf(p), aliveOrder.length));
       if (this.stopped || speech === null) return;
-      this.emit("say", { text: speech || "……", seat: p.seat, line: `${this.S.day}日目 ${label(p)}: 「${speech || "……"}」` });
+      this.emit("say", { text: speech || "……", seat: p.seat, summary: p.human ? "" : this.lastSummary, line: `${this.S.day}日目 ${label(p)}: 「${speech || "……"}」` });
     }
     c.idx++;
     if (c.idx >= order.length) {
@@ -496,7 +506,7 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
       ? await this.waitHuman("speak", "処刑されます。最後に一言どうぞ")
       : await this.aiSpeak(t, "あなたは投票で処刑されることになりました。最後に一言どうぞ。");
     if (this.stopped || last === null) return;
-    this.emit("say", { text: last || "……", seat: t.seat, line: `${this.S.day}日目 ${label(t)}（遺言）: 「${last || "……"}」` });
+    this.emit("say", { text: last || "……", seat: t.seat, summary: t.human ? "" : this.lastSummary, line: `${this.S.day}日目 ${label(t)}（遺言）: 「${last || "……"}」` });
     this.S.speaking = null;
     t.alive = false;
     this.S.executed.push([this.S.day, label(t)]);

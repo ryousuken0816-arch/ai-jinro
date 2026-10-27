@@ -62,6 +62,9 @@ input { font: inherit; }
 .rolegrid .wolf b { color: var(--danger); }
 @media (max-height: 520px) { .rolegrid { grid-template-columns: repeat(4, 1fr); } .rolegrid button { padding: 6px 8px; } }
 #hint.hurry { color: var(--danger); }
+#caption .sum { display: inline-block; background: #fde7a8; color: #6b4a00; border-radius: 6px; padding: 0 8px; margin-right: 8px; font-weight: bold; font-size: .9em; }
+.lab .stance { display: inline-block; margin-top: 2px; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: rgba(255, 253, 247, .92); color: #3b3424; max-width: 11em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+@media (max-height: 520px) { .lab .stance { font-size: 10px; max-width: 8em; } }
 #micbtn { padding: 6px 10px; }
 #micbtn.on { background: var(--danger); border-color: var(--danger); }
 #credit { font-size: 10px; color: var(--text); text-shadow: 0 0 3px #000; margin-top: 4px; min-height: 12px; }
@@ -244,6 +247,8 @@ input { font: inherit; }
     <p style="color:var(--muted);font-size:12px">APIキーはこのスマホ（ブラウザ）の中にだけ保存されます。打つのが面倒なときは、PC で「スマホにAPIキーを入れる.bat」を押して、出てきた QR コードを読むだけで入ります。</p>
     <p id="voicestatus" style="margin-top:14px"></p>
     <div class="row"><button id="soundbtn"></button><button id="findvoice">PC の声を探す</button></div>
+    <p style="margin-top:14px">発言と発言のあいだの間: <span id="gapnow"></span></p>
+    <div class="row" id="gapbtns"><button data-gap="短め">短め</button><button data-gap="普通">普通</button><button data-gap="長め">長め</button></div>
     <p style="color:var(--muted);font-size:12px">PC の VOICEVOX を使うときは、PC で起動.bat を押して、出てきた QR コードからこのページを開いてください。</p>
     <div class="row"><button id="quitbtn" style="border-color:var(--danger);color:var(--danger)">ゲームをやめる</button><button data-close>閉じる</button></div>
   </div></div>
@@ -253,7 +258,7 @@ input { font: inherit; }
 <script type="module">
 import * as THREE from "three";
 import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES, SPEECH_SECONDS, fixTranscript } from "./game.js";
-import { Voice, makeRecognizer, normalizeSpeech } from "./voice.js";
+import { Voice, makeRecognizer, normalizeSpeech, GAPS } from "./voice.js";
 
 const $ = (s) => document.querySelector(s);
 const SEAT_R = 4.2;
@@ -611,6 +616,7 @@ function frame() {
 // ================================================================ ゲームの状態と UI
 
 let S = null, lastId = 0, lastSpeech = null, votesDay = null, endShown = false, roleShown = false, builtFor = null, lastPendingKind = null;
+let stanceShown = {};   // 席番号 → その人のいまの主張（要点）。声で流れたものだけ出す
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
@@ -628,7 +634,8 @@ function render() {
     s.label.className = "lab" + (p.alive ? "" : " dead") + (opts.includes(p.seat) ? " pick" : "");
     s.label.innerHTML = (thinking && S.speaking === p.seat ? `<div><span class="think">考え中…</span></div>` : "")
       + `<div class="nm"><span class="no">${p.seat}</span><span class="nmtext">${esc(p.name)}</span>${isMe ? "（自分）" : ""}${p.alive ? "" : " ✝"}</div>`
-      + (p.co || rv ? `<div>${p.co ? `<span class="tag">${esc(p.co)}CO</span> ` : ""}${rv ? `<span class="tag role">${esc(rv.role)}</span>` : ""}</div>` : "");
+      + (p.co || rv ? `<div>${p.co ? `<span class="tag">${esc(p.co)}CO</span> ` : ""}${rv ? `<span class="tag role">${esc(rv.role)}</span>` : ""}</div>` : "")
+      + (p.alive && stanceShown[p.seat] ? `<div><span class="stance">${esc(stanceShown[p.seat])}</span></div>` : "");
   }
   const alive = S.players.filter((p) => p.alive).length;
   const ph = { day: "昼", vote: "投票", night: "夜", end: "終了" }[S.phase] || "";
@@ -674,7 +681,8 @@ function declutterLabels() {
 function renderCaption() {
   const c = $("#caption");
   if (!lastSpeech || (S && S.phase === "night")) { c.innerHTML = ""; return; }
-  const html = `<b>${lastSpeech.seat ? lastSpeech.seat + " " : ""}${esc(lastSpeech.name)}</b>${esc(lastSpeech.text)}`;
+  const html = `<b>${lastSpeech.seat ? lastSpeech.seat + " " : ""}${esc(lastSpeech.name)}</b>`
+    + (lastSpeech.summary ? `<span class="sum">${esc(lastSpeech.summary)}</span>` : "") + esc(lastSpeech.text);
   if (c.innerHTML !== html) { c.innerHTML = html; c.classList.remove("full"); }
   c.style.top = ($("#top").offsetTop + $("#top").offsetHeight + 6) + "px";
 }
@@ -689,7 +697,7 @@ function addLog(e) {
   else html = esc(e.text);
   log.insertAdjacentHTML("beforeend", `<div class="e ${e.type}">${html}</div>`);
   log.scrollTop = log.scrollHeight;
-  if (e.type === "say") lastSpeech = e;
+  if (e.type === "say") { lastSpeech = e; if (e.summary) stanceShown[e.seat] = e.summary; }
   if (e.type === "phase") lastSpeech = null;
   if (e.type === "vote") {
     if (votesDay !== e.day) { votesDay = e.day; $("#votelist").innerHTML = ""; }
@@ -772,7 +780,7 @@ const ui = {
 };
 
 function resetScreen() {
-  S = null; lastSpeech = null; votesDay = null; endShown = false; roleShown = false; builtFor = null; lastPendingKind = null;
+  S = null; lastSpeech = null; votesDay = null; endShown = false; roleShown = false; builtFor = null; lastPendingKind = null; stanceShown = {};
   clearSeats();
   $("#log").innerHTML = ""; $("#votes").classList.remove("open"); $("#caption").innerHTML = "";
 }
@@ -819,6 +827,7 @@ function updateVoiceStatus() {
   const s = !voice.sound ? "音: なし（文字だけ）" : voice.vvOk ? "声: PC の VOICEVOX" : "声: スマホの読み上げ";
   $("#voicestatus").textContent = s;
   $("#soundbtn").textContent = voice.sound ? "音をなしにする" : "音をありにする";
+  $("#gapnow").textContent = `${voice.gap}（${GAPS[voice.gap] / 1000} 秒）`;
   $("#keystatus").textContent = MOCK ? "お試しモード（API を使いません）" : readKey() ? "APIキー: 保存済み" : "APIキー: まだ入っていません";
 }
 
@@ -835,6 +844,7 @@ $("#savekey").onclick = () => {
   writeKey(k); $("#keyinput").value = ""; updateVoiceStatus(); toast("APIキーを保存しました");
 };
 $("#soundbtn").onclick = () => { voice.setSound(!voice.sound); updateVoiceStatus(); };
+$("#gapbtns").addEventListener("click", (ev) => { const b = ev.target.closest("[data-gap]"); if (b) { voice.setGap(b.dataset.gap); updateVoiceStatus(); } });
 $("#findvoice").onclick = async () => {
   $("#voicestatus").textContent = "PC を探しています…";
   await voice.checkVoicevox();
@@ -912,6 +922,7 @@ $("#micbtn").addEventListener("pointerdown", (ev) => ev.preventDefault());
 $("#say").onsubmit = (ev) => {
   ev.preventDefault();
   const input = $("#sayinput"), text = input.value;
+  recognizer?.abort();
   if (game && game.submit(text)) {
     input.value = "";
     input.blur();
@@ -922,16 +933,21 @@ $("#say").onsubmit = (ev) => {
 };
 
 // --- あなたの発言時間（最大 60 秒）。時間が来たら入力中の文字をそのまま送る
-let speakStart = null;
+let speakStart = null, speakTurn = 0;
 setInterval(() => {
   const pend = game && game.S.pending;
   if (!pend || pend.kind !== "speak") { speakStart = null; $("#hint").classList.remove("hurry"); return; }
-  if (speakStart === null) speakStart = Date.now();
+  if (speakStart === null) {
+    // 自分の番が始まったら、前の番の文字が残らないよう入力欄を空にする
+    speakStart = Date.now();
+    speakTurn++;
+    if (!fixing) $("#sayinput").value = "";
+  }
   const left = Math.max(0, SPEECH_SECONDS - Math.floor((Date.now() - speakStart) / 1000));
   $("#hint").textContent = fixing ? `誤変換を直しています…　残り ${left} 秒` : `${pend.prompt}　残り ${left} 秒`;
   $("#hint").classList.toggle("hurry", left <= 10);
   if (left === 0 && !fixing) {
-    recognizer?.stop?.();
+    recognizer?.abort();
     const text = $("#sayinput").value;
     if (game.submit(text)) { $("#sayinput").value = ""; $("#sayinput").blur(); toast(text.trim() ? "時間切れのため送信しました" : "時間切れです（黙ったことになります）"); }
   }
@@ -942,9 +958,12 @@ setInterval(() => {
 let fixing = false;
 async function polishTranscript(raw) {
   const input = $("#sayinput");
+  // 自分の番が終わったあとに届いた聞き取り結果は使わない
+  if (!game || !game.S.pending || game.S.pending.kind !== "speak") return;
+  const turn = speakTurn;
   let text = normalizeSpeech(raw);
   input.value = text;
-  if (!game || MOCK || !game.brain.quick) return;
+  if (MOCK || !game.brain.quick) return;
   fixing = true;
   const before = input.value;
   input.placeholder = "誤変換を直しています…";
@@ -952,7 +971,7 @@ async function polishTranscript(raw) {
   try {
     const fixed = await fixTranscript(game.brain, text, game.S.players);
     // 直している間にあなたが書き換えていたら、そちらを優先する
-    if (input.value === before && fixed) { input.value = fixed; if (fixed !== text) toast("聞き間違いを直しました。確かめて送信してください"); }
+    if (turn === speakTurn && input.value === before && fixed) { input.value = fixed; if (fixed !== text) toast("聞き間違いを直しました。確かめて送信してください"); }
   } catch { /* 直せなくても、決まった直し方の結果はそのまま使える */ }
   fixing = false;
   refresh();

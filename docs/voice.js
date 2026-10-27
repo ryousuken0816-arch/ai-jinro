@@ -5,6 +5,8 @@
 
 const VV_KEY = "jinro.voicevox";
 const SOUND_KEY = "jinro.sound";
+const GAP_KEY = "jinro.gap";
+export const GAPS = { "短め": 800, "普通": 2000, "長め": 4000 };   // 発言と発言のあいだの間（ミリ秒）
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -14,6 +16,7 @@ function writeJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v));
 export class Voice {
   constructor() {
     this.sound = readJSON(SOUND_KEY, true);
+    this.gap = readJSON(GAP_KEY, "普通");
     this.vv = readJSON(VV_KEY, null);       // { url, key }
     this.vvOk = false;
     this.speakers = [];                      // VOICEVOX のキャラ一覧
@@ -26,6 +29,7 @@ export class Voice {
   }
 
   setSound(on) { this.sound = on; writeJSON(SOUND_KEY, on); if (!on) this.cancel(); }
+  setGap(name) { if (GAPS[name]) { this.gap = name; writeJSON(GAP_KEY, name); } }
   setVoicevox(url, key) { this.vv = { url: url.replace(/\/$/, ""), key }; writeJSON(VV_KEY, this.vv); }
 
   async checkVoicevox() {
@@ -59,7 +63,8 @@ export class Voice {
       const style = c ? (c.styles.find((s) => s.name === "ノーマル") || c.styles[0]) : null;
       p.voice = {
         vv: style ? style.id : null, vvName: c ? c.name : "",
-        dev: i, pitch: +(0.75 + Math.random() * 0.6).toFixed(2), rate: +(0.95 + Math.random() * 0.3).toFixed(2),
+        // 速すぎると聞き取れないので、速さは 0.9〜1.1 倍に抑える（声の違いは主に高さで出す）
+        dev: i, pitch: +(0.75 + Math.random() * 0.6).toFixed(2), rate: +(0.9 + Math.random() * 0.2).toFixed(2),
       };
       i++;
     }
@@ -115,6 +120,9 @@ export class Voice {
       this.onSpeaking(item.player, null);
       await this.present(item);
       this.onSpeaking(null, null);
+      // 次の人が話し出す前に間をあけて、いまの発言を頭の中で整理できるようにする
+      await Promise.race([sleep(GAPS[this.gap] ?? 2000), new Promise((r) => { this.skip = r; })]);
+      this.skip = null;
     }
     this.busy = false;
     this.notify();
@@ -127,7 +135,7 @@ export class Voice {
     const skipped = new Promise((r) => { this.skip = r; });
     let speaking;
     if (!this.sound) {
-      speaking = sleep(Math.min(1500 + text.length * 60, 7000));   // 音なし: 読む時間だけ待つ
+      speaking = sleep(Math.min(2000 + text.length * 90, 12000));  // 音なし: 読む時間だけ待つ
     } else if (item.audio) {
       speaking = item.audio.then((url) => url ? this.playUrl(url, item.player) : this.speakDevice(text, item.player));
     } else {
@@ -192,22 +200,28 @@ export function makeRecognizer(onText, onState, onFinal) {
   r.lang = "ja-JP";
   r.interimResults = true;
   r.continuous = false;
-  let active = false, last = "";
+  let active = false, last = "", discard = false;
   r.onresult = (e) => {
+    if (discard) return;
     let t = "";
     for (const res of e.results) t += res[0].transcript;
     last = t;
     onText(t);
   };
-  r.onend = () => { active = false; onState(false); if (last) onFinal(last); last = ""; };
+  r.onend = () => {
+    active = false; onState(false);
+    if (last && !discard) onFinal(last);
+    last = ""; discard = false;
+  };
   r.onerror = (e) => { active = false; onState(false, e.error); };
   return {
     toggle() {
       if (active) { r.stop(); return; }
-      last = "";
+      last = ""; discard = false;
       try { r.start(); active = true; onState(true); } catch { onState(false, "start"); }
     },
-    stop() { if (active) r.stop(); },
+    // 送信や時間切れのときに呼ぶ。あとから届く聞き取り結果は捨てる（入力欄に書き戻さない）
+    abort() { discard = true; last = ""; if (active) r.abort(); },
   };
 }
 
