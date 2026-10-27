@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI人狼</title>
+<style>
+:root {
+  --bg: #1d2230; --panel: #262c3b; --panel-2: #303849;
+  --text: #f2efe8; --muted: #b9b4a8; --accent: #e9b949; --danger: #e0645a; --blue: #5aa0e0;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
+button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid #4a5468; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+input { font: inherit; }
+
+#app { position: relative; height: 100vh; overflow: hidden; }
+#stage { position: absolute; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+#stage canvas.dragging { cursor: grabbing; }
+#labels { position: absolute; inset: 0; pointer-events: none; }
+
+#top { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; pointer-events: none; }
+#phase { background: rgba(20, 24, 34, .8); padding: 6px 14px; border-radius: 8px; font-size: 15px; }
+#hint { background: rgba(20, 24, 34, .8); padding: 6px 14px; border-radius: 8px; font-size: 14px; color: var(--accent); }
+#hint:empty { display: none; }
+
+.lab { position: absolute; transform: translate(-50%, -100%); text-align: center; white-space: nowrap; pointer-events: auto; cursor: default; }
+.lab .nm { font-size: 15px; font-weight: bold; text-shadow: 0 0 3px #000, 0 1px 3px #000; }
+.lab .no { display: inline-block; color: var(--accent); font-size: 20px; font-weight: 900; font-style: italic; margin-right: 6px; text-shadow: 0 0 3px #000, 0 1px 3px #000; }
+.lab .tag { display: inline-block; margin-top: 2px; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--blue); color: #0d1a2a; font-weight: bold; }
+.lab .tag.role { background: var(--accent); }
+.lab .think { display: inline-block; font-size: 12px; background: rgba(20, 24, 34, .85); padding: 1px 8px; border-radius: 8px; color: var(--muted); margin-bottom: 2px; }
+.lab.dead { opacity: .5; }
+.lab.pick { cursor: pointer; }
+.lab.pick .nm { color: #9fd0ff; }
+
+.lab .nmtext { display: inline-block; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+
+/* いまの発言は画面上部に字幕で出す（頭の上の吹き出しだと名前と重なるため） */
+#caption { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); width: min(720px, calc(100% - 24px)); background: rgba(255, 253, 247, .95);
+  color: #1d2230; padding: 8px 14px; border-radius: 12px; font-size: 15px; line-height: 1.55; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); cursor: pointer;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+#caption.full { -webkit-line-clamp: unset; max-height: 60vh; overflow-y: auto; }
+#caption b { color: #9a6b00; margin-right: 8px; }
+#caption:empty { display: none; }
+
+/* 重なり順: 3D の名前ラベル < 画面のボタン類 < 小窓 */
+#labels { z-index: 1; }
+#top, #caption, #bottom, #log, #votes { z-index: 10; }
+.modal { z-index: 20; }
+#toast { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 15; background: rgba(20, 24, 34, .92); border: 1px solid #4a5468;
+  border-radius: 8px; padding: 6px 14px; font-size: 13px; pointer-events: none; opacity: 0; transition: opacity .3s; white-space: nowrap; }
+#toast.show { opacity: 1; }
+#micbtn { padding: 6px 10px; }
+#micbtn.on { background: var(--danger); border-color: var(--danger); }
+#credit { font-size: 10px; color: var(--text); text-shadow: 0 0 3px #000; margin-top: 4px; min-height: 12px; }
+#toast.err { color: var(--danger); border-color: var(--danger); }
+#rotate { position: absolute; inset: 0; z-index: 9000; background: var(--bg); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+#rotate .icon { font-size: 54px; animation: tilt 2s infinite; }
+@keyframes tilt { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+#rotate p { margin: 0; line-height: 1.6; }
+#rotate small { color: var(--muted); }
+
+#bottom { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; align-items: flex-end; gap: 10px; }
+#leftbtns { display: flex; flex-direction: column; gap: 6px; }
+#say { flex: 1; display: flex; gap: 6px; }
+#say input { flex: 1; min-width: 0; background: rgba(20, 24, 34, .9); color: var(--text); border: 1px solid #4a5468; border-radius: 8px; padding: 8px 10px; }
+#say input:focus { outline: 2px solid var(--accent); }
+#right { position: relative; text-align: right; }
+#cobtn { background: var(--blue); color: #0d1a2a; font-weight: bold; padding: 8px 20px; border: 0; }
+#roster { font-size: 12px; color: var(--text); background: rgba(20, 24, 34, .8); border-radius: 8px; padding: 3px 8px; margin-top: 6px; }
+#comenu { position: absolute; right: 0; bottom: calc(100% + 8px); width: 240px; background: var(--panel); border: 1px solid #4a5468; border-radius: 10px; padding: 8px; display: none; text-align: left; }
+#comenu.open { display: block; }
+#comenu .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#comenu h4 { margin: 8px 0 4px; font-size: 12px; color: var(--muted); font-weight: normal; }
+.rep { display: flex; align-items: center; gap: 4px; margin: 3px 0; font-size: 13px; }
+.rep span { flex: 1; }
+.rep button { padding: 2px 8px; }
+
+#log { position: absolute; left: 12px; top: 52px; bottom: 120px; width: min(380px, 80vw); background: rgba(24, 28, 40, .94); border: 1px solid #4a5468; border-radius: 10px;
+  padding: 10px 12px; overflow-y: auto; font-size: 13px; line-height: 1.6; display: none; }
+#log.open { display: block; }
+#log .e { margin: 2px 0; }
+#log .sys { color: var(--muted); }
+#log .phase { color: var(--accent); font-weight: bold; margin-top: 8px; }
+#log .death { color: var(--danger); }
+#log .co, #log .report { color: var(--blue); }
+#log .vote { color: var(--muted); }
+#log .secret { color: #8f8a7d; font-size: 12px; }
+
+#votes { position: absolute; right: 12px; top: 52px; width: 240px; background: rgba(24, 28, 40, .94); border: 1px solid #4a5468; border-radius: 10px; padding: 10px 12px; font-size: 13px; display: none; }
+#votes.open { display: block; }
+#votes h4 { margin: 0 0 6px; font-size: 13px; color: var(--accent); }
+
+.modal { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; padding: 16px; }
+.modal.open { display: flex; }
+.card { background: var(--panel); border: 1px solid #4a5468; border-radius: 14px; padding: 20px 22px; width: min(520px, 100%); max-height: 90vh; overflow-y: auto; }
+.card h2 { margin: 0 0 12px; font-size: 20px; }
+.card p { margin: 6px 0; line-height: 1.6; }
+.card .row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.card input[type=text] { flex: 1; background: var(--bg); color: var(--text); border: 1px solid #4a5468; border-radius: 8px; padding: 8px 10px; }
+.secret-list { margin: 8px 0 0; padding-left: 18px; color: var(--accent); }
+.rv { border-top: 1px solid #3c4558; padding: 8px 0; font-size: 14px; }
+.rv .th { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.win { color: var(--accent); }
+
+/* スマホ（縦長・狭い画面） */
+#app { height: 100dvh; }
+#stage canvas { touch-action: none; }
+@media (max-width: 700px) {
+  #top { top: 8px; left: 8px; right: 8px; flex-direction: column; align-items: stretch; gap: 6px; }
+  #phase, #hint { font-size: 13px; padding: 5px 10px; }
+  .lab .nm { font-size: 12px; }
+  .lab .no { font-size: 15px; margin-right: 3px; }
+  .lab .tag { font-size: 10px; padding: 0 5px; }
+  .lab .nmtext { max-width: 6em; }
+  #caption { font-size: 13px; padding: 6px 10px; }
+  #bottom { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); flex-wrap: wrap; gap: 6px; }
+  #leftbtns { flex-direction: row; order: 1; }
+  #right { order: 2; margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  #roster { margin-top: 0; font-size: 11px; }
+  #say { order: 3; flex-basis: 100%; }
+  #say input { font-size: 16px; }
+  #comenu { bottom: calc(100% + 6px); width: min(260px, 90vw); }
+  button { padding: 6px 10px; font-size: 14px; }
+  #log { left: 8px; right: 8px; width: auto; top: 90px; bottom: 140px; }
+  #votes { top: 90px; right: 8px; width: 200px; font-size: 12px; }
+}
+
+/* スマホを縦に持っているときは「横にして」と出す */
+@media (orientation: portrait) and (pointer: coarse) and (max-width: 700px) {
+  body:not(.allow-portrait) #rotate { display: flex; }
+}
+
+/* スマホ横向き（高さが低い画面）: 下のボタン類を 1 列にまとめて広場を広く */
+@media (max-height: 520px) and (orientation: landscape) {
+  #top { top: 6px; left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); flex-direction: row; align-items: center; gap: 6px; }
+  #phase, #hint { font-size: 12px; padding: 4px 10px; }
+  #caption { top: 38px; font-size: 13px; padding: 5px 12px; width: min(640px, 72vw); -webkit-line-clamp: 2; }
+  .lab .nm { font-size: 11px; }
+  .lab .no { font-size: 14px; margin-right: 3px; }
+  .lab .tag { font-size: 10px; padding: 0 5px; margin-top: 0; }
+  .lab .think { font-size: 10px; }
+  .lab .nmtext { max-width: 6em; }
+  #bottom { left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); bottom: calc(6px + env(safe-area-inset-bottom));
+    flex-wrap: nowrap; align-items: center; gap: 6px; }
+  #leftbtns { flex-direction: row; order: 0; gap: 4px; }
+  #say { order: 0; flex-basis: auto; }
+  #say input { font-size: 16px; padding: 5px 8px; }
+  #right { order: 0; margin-left: 0; display: flex; align-items: center; gap: 6px; }
+  #roster { display: none; }
+  button { padding: 5px 8px; font-size: 12px; }
+  #cobtn { padding: 6px 14px; }
+  #log { left: max(8px, env(safe-area-inset-left)); right: auto; width: min(360px, 45vw); top: 38px; bottom: 50px; font-size: 12px; }
+  #votes { top: 38px; width: 190px; font-size: 12px; padding: 6px 10px; }
+  .card { padding: 14px 16px; max-height: 92vh; }
+  .card h2 { font-size: 17px; margin-bottom: 6px; }
+}
+</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+</head>
+<body>
+<div id="app">
+  <div id="stage"></div>
+  <div id="labels"></div>
+  <div id="top"><div id="phase">AI人狼</div><div id="hint"></div></div>
+  <div id="caption"></div>
+  <div id="toast"></div>
+  <div id="rotate">
+    <div class="icon">📱</div>
+    <p>スマホを横向きにしてください</p>
+    <button id="landscapebtn">全画面で横向きにする</button>
+    <small id="rotatenote">iPhone は本体を横に向けてください（画面の回転ロックは切っておく）</small>
+    <button id="portraitbtn" style="background:transparent;border:0;color:var(--muted);text-decoration:underline">このまま縦で遊ぶ</button>
+  </div>
+
+  <div id="log"></div>
+  <div id="votes"><h4>投票結果</h4><div id="votelist"></div></div>
+
+  <div id="bottom">
+    <div id="leftbtns">
+      <button id="rolebtn">役職確認</button>
+      <button id="logbtn">チャットと履歴</button>
+      <button id="settingsbtn">設定</button>
+    </div>
+    <form id="say"><input id="sayinput" placeholder="発言の順番を待っています" autocomplete="off" enterkeyhint="send" disabled><button type="button" id="micbtn" aria-label="音声入力">🎤</button><button id="saybtn" disabled>送信</button></form>
+    <div id="right">
+      <div id="comenu">
+        <div class="grid">
+          <button data-co="占い師">占いCO</button><button data-co="霊媒師">霊媒CO</button>
+          <button data-co="騎士">騎士CO</button><button data-co="村人">村人CO</button>
+        </div>
+        <h4>結果を報告</h4>
+        <div id="replist"></div>
+      </div>
+      <button id="skipbtn" title="いまの発言を飛ばす">飛ばす</button>
+      <button id="cobtn">CO</button>
+      <div id="roster"></div>
+      <div id="credit"></div>
+    </div>
+  </div>
+
+  <div class="modal open" id="startModal"><div class="card">
+    <h2>AI人狼 9人村</h2>
+    <p>人狼2・狂人1・占い師・霊媒師・騎士・村人3。あなた以外の8人は Claude です。</p>
+    <p id="modenote" style="color:var(--accent);font-size:13px"></p>
+    <p style="color:var(--muted);font-size:13px">広場はドラッグ（スマホは指でなぞる）で回せます。PCはホイールで寄ったり引いたりできます。</p>
+    <div class="row"><input type="text" id="nameinput" placeholder="あなたの名前" maxlength="10"></div>
+    <div class="row"><button id="resumebtn" style="display:none">続きから</button><button id="startbtn">参加してはじめる</button><button id="watchbtn">観戦する</button><button id="startsettings">設定</button></div>
+    <p id="starterr" style="color: var(--danger)"></p>
+  </div></div>
+
+  <div class="modal" id="roleModal"><div class="card"><div id="rolebody"></div><div class="row"><button data-close>閉じる</button></div></div></div>
+  <div class="modal" id="settingsModal"><div class="card">
+    <h2>設定</h2>
+    <p id="keystatus"></p>
+    <div class="row"><input type="text" id="keyinput" placeholder="Claude の APIキー（sk-…）" autocomplete="off" style="-webkit-text-security:disc"><button id="savekey">保存</button></div>
+    <p style="color:var(--muted);font-size:12px">APIキーはこのスマホ（ブラウザ）の中にだけ保存されます。</p>
+    <p id="voicestatus" style="margin-top:14px"></p>
+    <div class="row"><button id="soundbtn"></button><button id="findvoice">PC の声を探す</button></div>
+    <p style="color:var(--muted);font-size:12px">PC の VOICEVOX を使うときは、PC で起動.bat を押して、出てきた QR コードからこのページを開いてください。</p>
+    <div class="row"><button id="quitbtn" style="border-color:var(--danger);color:var(--danger)">ゲームをやめる</button><button data-close>閉じる</button></div>
+  </div></div>
+  <div class="modal" id="endModal"><div class="card"><div id="endbody"></div><div class="row"><button id="againbtn">もう一度</button><button data-close>盤面を見る</button></div></div></div>
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES } from "./game.js";
+import { Voice, makeRecognizer } from "./voice.js";
+
+const $ = (s) => document.querySelector(s);
+const SEAT_R = 4.2;
+
+// ================================================================ 3D の広場
+
+const stage = $("#stage");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const DAY_SKY = new THREE.Color("#a9cbe6"), NIGHT_SKY = new THREE.Color("#0d1530");
+scene.background = DAY_SKY.clone();
+scene.fog = new THREE.Fog(DAY_SKY.clone(), 30, 70);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+const hemi = new THREE.HemisphereLight("#ffffff", "#7a7464", 1.1);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight("#fff3dc", 2.2);
+sun.position.set(12, 20, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 14, bottom: -14, near: 1, far: 60 });
+scene.add(sun);
+
+function canvasTex(w, h, draw, repeat) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); }
+  t.anisotropy = 4;
+  return t;
+}
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...opts });
+function mesh(geo, material, x = 0, y = 0, z = 0, shadow = true) {
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x, y, z);
+  m.castShadow = shadow; m.receiveShadow = true;
+  return m;
+}
+
+// 石畳
+const stoneTex = canvasTex(512, 512, (g, w, h) => {
+  const r = rng(7), rows = 8, cols = 6;
+  g.fillStyle = "#6f6b64"; g.fillRect(0, 0, w, h);
+  for (let y = 0; y < rows; y++) for (let x = -1; x < cols + 1; x++) {
+    const off = (y % 2) * (w / cols / 2), v = 140 + r() * 40 | 0;
+    g.fillStyle = `rgb(${v},${v - 4},${v - 10})`;
+    g.fillRect(x * w / cols + off + 3, y * h / rows + 3, w / cols - 6, h / rows - 6);
+  }
+}, 18);
+const ground = mesh(new THREE.PlaneGeometry(90, 90), mat("#ffffff", { map: stoneTex }), 0, 0, 0, false);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const ring = mesh(new THREE.RingGeometry(SEAT_R + 1.4, SEAT_R + 1.6, 64), mat("#d8d2c4"), 0, 0.01, 0, false);
+ring.rotation.x = -Math.PI / 2;
+scene.add(ring);
+const inner = mesh(new THREE.CircleGeometry(SEAT_R + 1.4, 64), mat("#9e998f"), 0, 0.005, 0, false);
+inner.rotation.x = -Math.PI / 2;
+scene.add(inner);
+
+// 建物（ぐるりと囲む）
+const WALLS = ["#d9cfbd", "#c7d8d4", "#e6d5b0", "#bfcadb", "#dcc3b6", "#cfd7b8"];
+const ROOFS = ["#7a4a3a", "#3f5a73", "#5b6b4a", "#6d3f4a", "#4a4a55"];
+function wallTex(wall) {
+  return canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = wall; g.fillRect(0, 0, w, h);
+    g.strokeStyle = "#5a3f2e"; g.lineWidth = 8;
+    g.strokeRect(0, 0, w, h);
+    g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+    for (const [x, y] of [[40, 30], [150, 30], [40, 158], [150, 158]]) {
+      g.fillStyle = "#f4f1ea"; g.fillRect(x - 4, y - 4, 74, 76);
+      g.fillStyle = "#3d5a78"; g.fillRect(x, y, 66, 68);
+      g.fillStyle = "#f4f1ea"; g.fillRect(x + 31, y, 4, 68); g.fillRect(x, y + 32, 66, 4);
+    }
+  });
+}
+const lampLights = [];
+const lampBulbs = [];
+function building(angle, dist, r) {
+  const w = 6 + r() * 4, d = 5, h = 6 + r() * 5;
+  const wall = WALLS[(r() * WALLS.length) | 0];
+  const tex = wallTex(wall);
+  tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(Math.round(w / 3), Math.round(h / 3.2));
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(w, h, d), mat("#ffffff", { map: tex }), 0, h / 2, 0));
+  const roof = mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.75, 2.4 + r() * 1.5, 4), mat(ROOFS[(r() * ROOFS.length) | 0]), 0, h + 1.2, 0);
+  roof.rotation.y = Math.PI / 4; roof.scale.z = d / w;
+  g.add(roof);
+  g.add(mesh(new THREE.BoxGeometry(1.2, 2.2, 0.2), mat("#4b3426"), 0, 1.1, d / 2 + 0.05));
+  g.position.set(Math.sin(angle) * dist, 0, Math.cos(angle) * dist);
+  g.rotation.y = angle + Math.PI;
+  scene.add(g);
+}
+function stall(angle, dist, color) {
+  const g = new THREE.Group();
+  const stripe = canvasTex(256, 64, (c, w, h) => { for (let i = 0; i < 8; i++) { c.fillStyle = i % 2 ? "#f4f1ea" : color; c.fillRect(i * w / 8, 0, w / 8, h); } });
+  g.add(mesh(new THREE.BoxGeometry(3, 0.9, 1.2), mat("#8a5a3a"), 0, 0.45, 0));
+  for (let i = 0; i < 5; i++) g.add(mesh(new THREE.SphereGeometry(0.13, 8, 6), mat(["#d94a3a", "#f0a030", "#7cb342"][i % 3]), -1.1 + i * 0.55, 0.98, 0.1));
+  for (const [x, z] of [[-1.4, -0.5], [1.4, -0.5], [-1.4, 0.5], [1.4, 0.5]]) g.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.4), mat("#6b4a32"), x, 1.2, z));
+  const aw = mesh(new THREE.BoxGeometry(3.4, 0.12, 1.8), mat("#ffffff", { map: stripe }), 0, 2.45, 0.1);
+  aw.rotation.x = 0.18;
+  g.add(aw);
+  g.position.set(Math.sin(angle) * dist, 0, Math.cos(angle) * dist);
+  g.rotation.y = angle + Math.PI;
+  scene.add(g);
+}
+function lamp(angle, dist) {
+  const g = new THREE.Group();
+  const iron = mat("#2b2f36", { roughness: 0.5, metalness: 0.4 });
+  g.add(mesh(new THREE.CylinderGeometry(0.08, 0.12, 3.6), iron, 0, 1.8, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.4, 0.5, 0.4), iron, 0, 3.75, 0));
+  const bulbMat = mat("#fff2c4", { emissive: "#ffd27a", emissiveIntensity: 0.2 });
+  g.add(mesh(new THREE.BoxGeometry(0.3, 0.36, 0.3), bulbMat, 0, 3.72, 0, false));
+  const light = new THREE.PointLight("#ffcf80", 0, 12, 1.6);
+  light.position.set(0, 3.6, 0);
+  g.add(light);
+  lampLights.push(light); lampBulbs.push(bulbMat);
+  g.position.set(Math.sin(angle) * dist, 0, Math.cos(angle) * dist);
+  scene.add(g);
+}
+function tree(angle, dist, r) {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(0.18, 0.25, 2.2), mat("#6b4a32"), 0, 1.1, 0));
+  for (let i = 0; i < 3; i++) g.add(mesh(new THREE.IcosahedronGeometry(1.1 + r() * 0.4, 0), mat(["#4f7f3a", "#5f8f45", "#3f6e33"][i]), (r() - .5) * .8, 2.6 + i * 0.6, (r() - .5) * .8));
+  g.position.set(Math.sin(angle) * dist, 0, Math.cos(angle) * dist);
+  scene.add(g);
+}
+{
+  const r = rng(42);
+  for (let i = 0; i < 12; i++) building(i * Math.PI * 2 / 12 + 0.12, 25 + r() * 3, r);
+  stall(0.5, 13, "#d0453a"); stall(1.9, 13.5, "#3d78c8"); stall(3.3, 13, "#3f9a5e"); stall(4.6, 13.5, "#d08a2e");
+  for (let i = 0; i < 8; i++) lamp(i * Math.PI / 4 + 0.39, 9.5);
+  for (let i = 0; i < 7; i++) tree(i * Math.PI * 2 / 7 + 0.9, 18 + r() * 2, r);
+}
+
+// ================================================================ 人と椅子
+
+const SKIN = ["#f3d2b5", "#e8bc98", "#d9a47c", "#b97f5a", "#8d5a3c"];
+const HAIR = ["#1d1a18", "#3b2a20", "#6b4a2f", "#a87a4a", "#d8c07a", "#c9c9c9", "#8a3b2f", "#2e3f6b"];
+const CLOTH = ["#d9443a", "#3b6fc4", "#3f9a5e", "#e0a030", "#8a54b8", "#e8e4dc", "#2b2f36", "#e07a9a", "#f07a2a", "#4fb3c8"];
+const PANTS = ["#2b3448", "#3b3b3b", "#5b4a3a", "#2f4a6b", "#d9d4c8"];
+
+function chair() {
+  const g = new THREE.Group(), wood = mat("#7a5136");
+  g.add(mesh(new THREE.BoxGeometry(0.62, 0.08, 0.58), wood, 0, 0.46, 0));
+  for (const [x, z] of [[-0.26, -0.24], [0.26, -0.24], [-0.26, 0.24], [0.26, 0.24]]) g.add(mesh(new THREE.BoxGeometry(0.06, 0.46, 0.06), wood, x, 0.23, z));
+  g.add(mesh(new THREE.BoxGeometry(0.62, 0.5, 0.06), wood, 0, 0.75, -0.27));
+  return g;
+}
+
+function person(seed) {
+  const r = rng(seed * 7919 + 13);
+  const pick = (a) => a[(r() * a.length) | 0];
+  const skin = mat(pick(SKIN)), hair = mat(pick(HAIR)), cloth = mat(pick(CLOTH)), pants = mat(pick(PANTS)), shoe = mat("#2a2420");
+  const outfit = pick(["shirt", "shirt", "hoodie", "suit"]);
+  const top = outfit === "suit" ? mat("#2a2d35") : cloth;
+  const g = new THREE.Group();
+  const mats = [skin, hair, top, pants, shoe];
+  for (const s of [-1, 1]) {
+    const thigh = mesh(new THREE.CylinderGeometry(0.095, 0.09, 0.46), pants, s * 0.12, 0.56, 0.14); thigh.rotation.x = Math.PI / 2; g.add(thigh);
+    g.add(mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.5), pants, s * 0.12, 0.29, 0.37));
+    g.add(mesh(new THREE.BoxGeometry(0.14, 0.09, 0.26), shoe, s * 0.12, 0.045, 0.43));
+  }
+  const torso = mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.56, 12), top, 0, 0.86, -0.02);
+  g.add(torso);
+  g.add(mesh(new THREE.SphereGeometry(0.21, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), top, 0, 1.13, -0.02));
+  if (outfit === "suit") {
+    const white = mat("#f4f1ea"); mats.push(white);
+    g.add(mesh(new THREE.BoxGeometry(0.12, 0.3, 0.02), white, 0, 0.98, 0.17));
+    g.add(mesh(new THREE.BoxGeometry(0.05, 0.26, 0.025), mat(pick(["#c0392b", "#2e5fa8", "#d4a017"])), 0, 0.95, 0.185));
+  }
+  if (outfit === "hoodie") {
+    const hood = mesh(new THREE.TorusGeometry(0.17, 0.07, 8, 16), top, 0, 1.2, -0.12); hood.rotation.x = Math.PI / 2.4; g.add(hood);
+  }
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.position.set(s * 0.27, 1.07, -0.02);
+    const up = mesh(new THREE.CylinderGeometry(0.065, 0.06, 0.34), top, 0, -0.17, 0); arm.add(up);
+    const fore = new THREE.Group(); fore.position.set(0, -0.34, 0); fore.rotation.x = -1.25;
+    fore.add(mesh(new THREE.CylinderGeometry(0.058, 0.05, 0.3), top, 0, -0.15, 0));
+    fore.add(mesh(new THREE.SphereGeometry(0.06, 8, 6), skin, 0, -0.32, 0));
+    arm.add(fore);
+    arm.rotation.z = s * 0.12;
+    g.add(arm); arms.push(arm);
+  }
+  const head = new THREE.Group();
+  head.position.set(0, 1.33, 0);
+  head.add(mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.1), skin, 0, -0.12, 0));
+  head.add(mesh(new THREE.SphereGeometry(0.19, 16, 12), skin, 0, 0.04, 0));
+  const eye = mat("#1a1a1a"); mats.push(eye);
+  for (const s of [-1, 1]) head.add(mesh(new THREE.SphereGeometry(0.024, 8, 6), eye, s * 0.065, 0.06, 0.17, false));
+  const style = pick(["short", "long", "spiky", "bob", "cap", "bald"]);
+  if (style !== "bald") {
+    const cap = mesh(new THREE.SphereGeometry(0.205, 16, 10, 0, Math.PI * 2, 0, Math.PI / 1.9), hair, 0, 0.06, -0.01); head.add(cap);
+  }
+  if (style === "long") head.add(mesh(new THREE.BoxGeometry(0.38, 0.42, 0.14), hair, 0, -0.1, -0.12));
+  if (style === "bob") { const b = mesh(new THREE.SphereGeometry(0.22, 14, 10), hair, 0, 0.0, -0.04); b.scale.set(1.05, 0.85, 0.9); head.add(b); }
+  if (style === "spiky") for (let i = 0; i < 6; i++) { const c = mesh(new THREE.ConeGeometry(0.06, 0.18, 6), hair, Math.cos(i) * 0.1, 0.22, Math.sin(i) * 0.1 - 0.04); c.rotation.set(Math.sin(i) * 0.5, 0, -Math.cos(i) * 0.5); head.add(c); }
+  if (style === "cap") { const c = mat(pick(CLOTH)); mats.push(c); head.add(mesh(new THREE.SphereGeometry(0.215, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2.2), c, 0, 0.07, 0)); head.add(mesh(new THREE.BoxGeometry(0.22, 0.03, 0.16), c, 0, 0.12, 0.2)); }
+  g.add(head);
+  return { group: g, head, arms, mats };
+}
+
+const seats = {};   // seat -> { root, body, ringMesh, label }
+let base = 1, yaw = 0, zoom = 1;
+
+function clearSeats() {
+  for (const s of Object.values(seats)) { scene.remove(s.root); s.label.remove(); }
+  for (const k of Object.keys(seats)) delete seats[k];
+}
+
+function buildSeats(players, baseSeat) {
+  clearSeats();
+  base = baseSeat; yaw = 0;
+  const n = players.length;
+  for (const p of players) {
+    const a = (p.seat - base) * 2 * Math.PI / n;
+    const root = new THREE.Group();
+    root.position.set(Math.sin(a) * SEAT_R, 0, Math.cos(a) * SEAT_R);
+    root.rotation.y = a + Math.PI;
+    root.add(chair());
+    const body = person(hash(p.name) + p.seat);
+    root.add(body.group);
+    const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.68, 32), new THREE.MeshBasicMaterial({ color: "#5aa0e0", transparent: true, opacity: 0 }));
+    ringMesh.rotation.x = -Math.PI / 2; ringMesh.position.y = 0.02;
+    root.add(ringMesh);
+    root.traverse((o) => { o.userData.seat = p.seat; });
+    scene.add(root);
+    const label = document.createElement("div");
+    label.className = "lab";
+    label.addEventListener("click", () => pickSeat(p.seat));
+    $("#labels").appendChild(label);
+    seats[p.seat] = { root, body, ringMesh, label, dead: false };
+  }
+}
+
+function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+function setDead(s, dead) {
+  if (s.dead === dead) return;
+  s.dead = dead;
+  for (const m of s.body.mats) { m.transparent = dead; m.opacity = dead ? 0.18 : 1; m.depthWrite = !dead; }
+  s.body.group.traverse((o) => { if (o.isMesh) o.castShadow = !dead; });
+}
+
+// --- カメラ（ドラッグで回す・ホイールで寄る）
+let drag = null;
+renderer.domElement.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y0: yaw, moved: false }; renderer.domElement.classList.add("dragging"); });
+addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x;
+  if (Math.abs(dx) > 4) drag.moved = true;
+  yaw = drag.y0 - dx * 0.006;
+});
+addEventListener("pointerup", (e) => {
+  renderer.domElement.classList.remove("dragging");
+  if (drag && !drag.moved && e.target === renderer.domElement) clickPick(e);
+  drag = null;
+});
+renderer.domElement.addEventListener("wheel", (e) => { zoom = Math.min(1.6, Math.max(0.55, zoom * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); }, { passive: false });
+
+const raycaster = new THREE.Raycaster();
+function clickPick(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const v = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(v, camera);
+  const hit = raycaster.intersectObjects(Object.values(seats).map((s) => s.root), true)[0];
+  if (hit && hit.object.userData.seat) pickSeat(hit.object.userData.seat);
+}
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+resize();
+
+// --- 昼と夜
+let nightAmt = 0;
+const tmp = new THREE.Vector3();
+const clock = new THREE.Clock();
+
+function frame() {
+  const t = clock.getElapsedTime();
+  const target = S && S.phase === "night" ? 1 : 0;
+  nightAmt += (target - nightAmt) * 0.04;
+  scene.background.copy(DAY_SKY).lerp(NIGHT_SKY, nightAmt);
+  scene.fog.color.copy(scene.background);
+  hemi.intensity = 1.1 - nightAmt * 0.95;
+  sun.intensity = 2.2 - nightAmt * 1.95;
+  sun.color.set(nightAmt > 0.5 ? "#7f95e0" : "#fff3dc");
+  for (const l of lampLights) l.intensity = nightAmt * 14;
+  for (const b of lampBulbs) b.emissiveIntensity = 0.2 + nightAmt * 2.5;
+
+  // 縦長の画面では円全体が入るように引いて、上から見下ろす
+  const portrait = camera.aspect < 1;
+  let dist, height;
+  if (portrait) {
+    if (camera.fov !== 62) { camera.fov = 62; camera.updateProjectionMatrix(); }
+    const halfH = Math.atan(Math.tan(THREE.MathUtils.degToRad(31)) * camera.aspect);
+    const d = (SEAT_R + 2.0) / Math.tan(halfH) * zoom;
+    dist = d * Math.cos(0.85); height = d * Math.sin(0.85);
+  } else if (innerHeight < 520) {
+    // スマホ横向き: 少し上から見下ろして、名前ラベル同士が縦に離れるようにする
+    if (camera.fov !== 45) { camera.fov = 45; camera.updateProjectionMatrix(); }
+    dist = (SEAT_R + 6.5) * zoom; height = 7 * zoom;
+  } else {
+    if (camera.fov !== 45) { camera.fov = 45; camera.updateProjectionMatrix(); }
+    dist = (SEAT_R + 6.2) * zoom; height = 4.4 * zoom;
+  }
+  camera.position.set(Math.sin(yaw) * dist, height, Math.cos(yaw) * dist);
+  camera.lookAt(0, 0.9, 0);
+
+  const pend = S && S.pending, opts = pend && pend.kind !== "speak" ? pend.options : [];
+  const rect = renderer.domElement.getBoundingClientRect();
+  for (const [seat, s] of Object.entries(seats)) {
+    const n = +seat;
+    const speaking = S && S.speaking === n;
+    const picking = opts.includes(n);
+    s.body.head.rotation.x = speaking ? Math.sin(t * 6) * 0.06 : Math.sin(t * 0.8 + n) * 0.02;
+    s.body.head.rotation.y = speaking ? Math.sin(t * 2) * 0.15 : Math.sin(t * 0.5 + n * 2) * 0.1;
+    s.body.arms[1].rotation.x = speaking ? -0.6 + Math.sin(t * 5) * 0.25 : 0;
+    s.ringMesh.material.color.set(speaking ? "#e9b949" : "#5aa0e0");
+    s.ringMesh.material.opacity = picking ? 0.55 + Math.sin(t * 5) * 0.35 : (speaking ? 0.9 : 0);
+    // 名前ラベルを頭の上に
+    s.body.head.getWorldPosition(tmp);
+    tmp.y += 0.32;
+    tmp.project(camera);
+    const behind = tmp.z > 1;
+    s.label.style.display = behind ? "none" : "";
+    s.label.style.left = ((tmp.x + 1) / 2 * rect.width) + "px";
+    s.label.style.top = ((1 - tmp.y) / 2 * rect.height) + "px";
+    s.label.style.zIndex = String(1000 - Math.round(tmp.z * 900));
+    s.screen = { x: (tmp.x + 1) / 2 * rect.width, y: (1 - tmp.y) / 2 * rect.height, behind };
+  }
+  declutterLabels();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+// ================================================================ ゲームの状態と UI
+
+let S = null, lastId = 0, lastSpeech = null, votesDay = null, endShown = false, roleShown = false, builtFor = null, lastPendingKind = null;
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function render() {
+  if (!S || !S.players) return;
+  const key = S.players.map((p) => p.name).join("|");
+  if (builtFor !== key) { builtFor = key; buildSeats(S.players, S.me ? S.me.seat : 1); }
+  const pend = S.pending, opts = pend && pend.kind !== "speak" ? pend.options : [];
+  const thinking = S.speaking && !(pend && pend.kind === "speak") && !S.over;
+  for (const p of S.players) {
+    const s = seats[p.seat];
+    setDead(s, !p.alive);
+    const rv = S.reveal && S.reveal.find((r) => r.seat === p.seat);
+    const isMe = S.me && S.me.seat === p.seat;
+    s.label.className = "lab" + (p.alive ? "" : " dead") + (opts.includes(p.seat) ? " pick" : "");
+    s.label.innerHTML = (thinking && S.speaking === p.seat ? `<div><span class="think">考え中…</span></div>` : "")
+      + `<div class="nm"><span class="no">${p.seat}</span><span class="nmtext">${esc(p.name)}</span>${isMe ? "（自分）" : ""}${p.alive ? "" : " ✝"}</div>`
+      + (p.co || rv ? `<div>${p.co ? `<span class="tag">${esc(p.co)}CO</span> ` : ""}${rv ? `<span class="tag role">${esc(rv.role)}</span>` : ""}</div>` : "");
+  }
+  const alive = S.players.filter((p) => p.alive).length;
+  const ph = { day: "昼", vote: "投票", night: "夜", end: "終了" }[S.phase] || "";
+  $("#phase").textContent = S.over ? `ゲーム終了 ― ${S.winner || ""}の勝利` : `${S.day}日目 ${ph}　生存 ${alive}/${S.players.length}`;
+  $("#hint").textContent = pend ? pend.prompt : "";
+  const speak = pend && pend.kind === "speak";
+  $("#sayinput").disabled = !speak; $("#saybtn").disabled = !speak;
+  $("#sayinput").placeholder = speak ? "発言を入力（空のまま送ると黙ります）" : (S.me && !S.me.alive ? "あなたは死亡しました（観戦中）" : "発言の順番を待っています");
+  const counts = {}; (S.setup || []).forEach((r) => counts[r] = (counts[r] || 0) + 1);
+  $("#roster").textContent = Object.entries(counts).map(([r, n]) => `${r.replace("師", "")}${n}`).join(" ");
+  $("#cobtn").disabled = !S.me || !S.me.alive || !["day", "vote"].includes(S.phase) || S.over;
+  $("#replist").innerHTML = S.players.filter((p) => p.alive && (!S.me || p.seat !== S.me.seat)).map((p) =>
+    `<div class="rep"><span>${p.seat} ${esc(p.name)}</span><button data-rep="${p.seat}" data-res="白">白</button><button data-rep="${p.seat}" data-res="黒">黒</button></div>`).join("");
+  renderCaption();
+  // 自分の番や投票が来たら知らせる（スマホは振動も）
+  const kind = pend ? pend.kind : null;
+  if (kind && kind !== lastPendingKind) {
+    toast(kind === "speak" ? "あなたの番です" : kind === "vote" ? "投票の時間です" : "夜の行動を選んでください");
+    if (navigator.vibrate) navigator.vibrate(150);
+  }
+  lastPendingKind = kind;
+  if (S.me && !roleShown) { roleShown = true; showRole(); }
+  if (S.over && !endShown) { endShown = true; showEnd(); }
+}
+
+// 名前ラベル同士が重なったら、奥の人（画面の上のほう）のラベルを上へずらす
+function declutterLabels() {
+  const boxes = [];
+  const list = Object.values(seats).filter((s) => s.screen && !s.screen.behind).sort((a, b) => b.screen.y - a.screen.y);
+  for (const s of list) {
+    const w = s.label.offsetWidth, h = s.label.offsetHeight;
+    let x = s.screen.x, y = s.screen.y;
+    for (let tries = 0; tries < 12; tries++) {
+      const hit = boxes.find((b) => Math.abs(b.x - x) < (b.w + w) / 2 + 2 && y > b.y - b.h - 2 && y - h < b.y + 2);
+      if (!hit) break;
+      y = hit.y - hit.h - 3;
+    }
+    boxes.push({ x, y, w, h });
+    s.label.style.top = y + "px";
+  }
+}
+
+function renderCaption() {
+  const c = $("#caption");
+  if (!lastSpeech || (S && S.phase === "night")) { c.innerHTML = ""; return; }
+  const html = `<b>${lastSpeech.seat ? lastSpeech.seat + " " : ""}${esc(lastSpeech.name)}</b>${esc(lastSpeech.text)}`;
+  if (c.innerHTML !== html) { c.innerHTML = html; c.classList.remove("full"); }
+  c.style.top = ($("#top").offsetTop + $("#top").offsetHeight + 6) + "px";
+}
+
+function addLog(e) {
+  const log = $("#log");
+  let html = "";
+  if (e.type === "say") html = `<b>${esc(e.name)}</b>：${esc(e.text)}`;
+  else if (e.type === "co") html = `【CO】${esc(e.name)} が${esc(e.text)}`;
+  else if (e.type === "report") html = `【報告】${esc(e.name)}：${esc(e.text)}`;
+  else if (e.type === "secret") html = `（${esc(e.text)}）`;
+  else html = esc(e.text);
+  log.insertAdjacentHTML("beforeend", `<div class="e ${e.type}">${html}</div>`);
+  log.scrollTop = log.scrollHeight;
+  if (e.type === "say") lastSpeech = e;
+  if (e.type === "phase") lastSpeech = null;
+  if (e.type === "vote") {
+    if (votesDay !== e.day) { votesDay = e.day; $("#votelist").innerHTML = ""; }
+    $("#votelist").insertAdjacentHTML("beforeend", `<div>${esc(e.text)}</div>`);
+    $("#votes").classList.add("open");
+  }
+  if (e.type === "phase" && !e.text.includes("投票")) $("#votes").classList.remove("open");
+}
+
+function showRole() {
+  if (!S || !S.me) {
+    $("#rolebody").innerHTML = S && S.watch ? "<h2>観戦中</h2><p>全員の役職と考えが表示されます。</p>" : "<h2>まだ役職はありません</h2>";
+  } else {
+    const m = S.me;
+    $("#rolebody").innerHTML = `<h2>あなたは【${esc(m.role)}】</h2><p>${esc(m.team)}。${esc(m.desc)}</p>`
+      + (m.secrets.length ? `<p>あなただけが知っていること:</p><ul class="secret-list">${m.secrets.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : "");
+  }
+  $("#roleModal").classList.add("open");
+}
+
+function showEnd() {
+  const rows = (S.reveal || []).map((r) => {
+    const team = ["人狼", "狂人"].includes(r.role) ? "人狼陣営" : "村人陣営";
+    return `<div class="rv"><span class="${team === S.winner ? "win" : ""}">${team === S.winner ? "◎" : "　"} ${r.seat} ${esc(r.name)}　【${esc(r.role)}】${r.alive ? "" : "（死亡）"}${r.skill ? "　" + esc(r.skill) : ""}</span>
+      ${r.thoughts.map((t) => `<div class="th">・${esc(t)}</div>`).join("")}</div>`;
+  }).join("");
+  $("#endbody").innerHTML = `<h2>${esc(S.winner || "ゲーム終了")}の勝利</h2><p style="color:var(--muted)">全員の役職と、AIたちが最後に考えていたこと</p>${rows}`;
+  $("#endModal").classList.add("open");
+}
+
+// ================================================================ ゲーム本体（スマホの中で動く）とのつなぎ
+
+const params = new URLSearchParams(location.search);
+const MOCK = params.has("mock");
+const KEY_STORE = "jinro.apiKey";
+const readKey = () => { try { return localStorage.getItem(KEY_STORE) || ""; } catch { return ""; } };
+const writeKey = (k) => { try { localStorage.setItem(KEY_STORE, k); } catch {} };
+
+const voice = new Voice();
+let game = null;
+let theory = "";
+const theoryReady = fetch("theory.md").then((r) => r.text()).then((t) => { theory = t; }).catch(() => {});
+
+// PC の起動画面の QR から開いたときは、URL の # に VOICEVOX の中継先が入っている
+{
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("voice") && h.get("vkey")) {
+    voice.setVoicevox(h.get("voice"), h.get("vkey"));
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
+// render() などが使う形に、ゲームの状態をまとめる
+function view() {
+  const G = game.S;
+  const h = G.players.find((p) => p.human);
+  const showAll = G.watch || G.over;
+  return {
+    ...G, setup: SETUP,
+    me: h ? { seat: h.seat, name: h.name, role: h.role, team: ROLES[h.role][0], desc: ROLES[h.role][1], secrets: h.secrets, alive: h.alive } : null,
+    reveal: showAll ? G.players.map((p) => ({ seat: p.seat, name: p.name, role: p.role, alive: p.alive,
+      skill: p.persona ? p.persona.skill : "", thoughts: p.thoughts.slice(-5) })) : null,
+  };
+}
+function refresh() { if (game) { S = view(); render(); } }
+
+voice.onShow = (ev) => {
+  if (!ev.private || (game && game.S.watch)) addLog(ev);
+  refresh();
+};
+voice.onSpeaking = (p, vvName) => { $("#credit").textContent = vvName ? `VOICEVOX:${vvName}` : ""; };
+
+const ui = {
+  onEvent: (ev) => voice.enqueue(ev, ev.seat ? game.S.players[ev.seat - 1] : null),
+  update: () => refresh(),
+  waitPresenter: (n) => voice.waitPresenter(n),
+  onFatal: (msg) => { toast(msg, true); openSettings(); },
+};
+
+function resetScreen() {
+  S = null; lastSpeech = null; votesDay = null; endShown = false; roleShown = false; builtFor = null; lastPendingKind = null;
+  clearSeats();
+  $("#log").innerHTML = ""; $("#votes").classList.remove("open"); $("#caption").innerHTML = "";
+}
+
+function makeBrain() {
+  if (MOCK) return new MockBrain();
+  const key = readKey();
+  return key ? new ClaudeBrain(key) : null;
+}
+
+async function begin(state, resumed) {
+  const brain = makeBrain();
+  if (!brain) { $("#starterr").textContent = "先に「設定」で Claude の APIキーを入れてください。"; return; }
+  voice.unlock();
+  await theoryReady;
+  await voice.checkVoicevox();
+  voice.assign(state.players);
+  if (game) game.stop();
+  resetScreen();
+  game = new Game(state, brain, theory, ui);
+  if (resumed) {
+    // 保存してあった出来事は、声なしでそのまま並べ直す
+    for (const ev of state.events) if (!ev.private || state.watch) addLog(ev);
+  }
+  document.querySelectorAll(".modal").forEach((m) => m.classList.remove("open"));
+  updateVoiceStatus();
+  refresh();
+  game.run();
+}
+
+function start(watch) {
+  $("#starterr").textContent = "";
+  begin(newState({ watch, humanName: $("#nameinput").value.trim() }), false);
+}
+
+function pickSeat(seat) {
+  if (!game || !S || !S.pending || S.pending.kind === "speak" || !S.pending.options.includes(seat)) return;
+  game.submit(seat);
+}
+
+// --- 設定
+
+function updateVoiceStatus() {
+  const s = !voice.sound ? "音: なし（文字だけ）" : voice.vvOk ? "声: PC の VOICEVOX" : "声: スマホの読み上げ";
+  $("#voicestatus").textContent = s;
+  $("#soundbtn").textContent = voice.sound ? "音をなしにする" : "音をありにする";
+  $("#keystatus").textContent = MOCK ? "お試しモード（API を使いません）" : readKey() ? "APIキー: 保存済み" : "APIキー: まだ入っていません";
+}
+
+function openSettings() {
+  updateVoiceStatus();
+  $("#settingsModal").classList.add("open");
+}
+
+$("#settingsbtn").onclick = openSettings;
+$("#startsettings").onclick = openSettings;
+$("#savekey").onclick = () => {
+  const k = $("#keyinput").value.trim();
+  if (!k.startsWith("sk-")) { toast("APIキーは sk- で始まる文字列です", true); return; }
+  writeKey(k); $("#keyinput").value = ""; updateVoiceStatus(); toast("APIキーを保存しました");
+};
+$("#soundbtn").onclick = () => { voice.setSound(!voice.sound); updateVoiceStatus(); };
+$("#findvoice").onclick = async () => {
+  $("#voicestatus").textContent = "PC を探しています…";
+  await voice.checkVoicevox();
+  if (game) voice.assign(game.S.players);
+  updateVoiceStatus();
+  toast(voice.vvOk ? "PC の VOICEVOX につながりました" : "PC が見つかりません。スマホの声を使います");
+};
+$("#quitbtn").onclick = () => {
+  if (game) game.stop();
+  game = null;
+  voice.cancel();
+  clearSaved();
+  resetScreen();
+  $("#settingsModal").classList.remove("open");
+  showStart();
+};
+
+function showStart() {
+  const saved = loadSaved();
+  $("#resumebtn").style.display = saved && !saved.over ? "" : "none";
+  $("#startModal").classList.add("open");
+}
+
+$("#startbtn").onclick = () => start(false);
+$("#watchbtn").onclick = () => start(true);
+$("#resumebtn").onclick = () => { const s = loadSaved(); if (s) begin(s, true); };
+$("#againbtn").onclick = () => { $("#endModal").classList.remove("open"); clearSaved(); showStart(); };
+$("#rolebtn").onclick = showRole;
+$("#skipbtn").onclick = () => voice.cancel();
+$("#caption").onclick = () => $("#caption").classList.toggle("full");
+$("#portraitbtn").onclick = () => document.body.classList.add("allow-portrait");
+$("#landscapebtn").onclick = async () => {
+  // Android の Chrome などは、全画面にすると向きを固定できる。iPhone はできない
+  try {
+    await document.documentElement.requestFullscreen();
+    await screen.orientation.lock("landscape");
+  } catch (e) {
+    $("#rotatenote").textContent = "この端末では自動で回せませんでした。本体を横に向けてください（画面の回転ロックは切っておく）";
+  }
+};
+$("#logbtn").onclick = () => $("#log").classList.toggle("open");
+$("#cobtn").onclick = () => $("#comenu").classList.toggle("open");
+document.querySelectorAll("[data-close]").forEach((b) => b.onclick = () => b.closest(".modal").classList.remove("open"));
+$("#comenu").addEventListener("click", (ev) => {
+  const t = ev.target, me = game && game.human();
+  if (!me || !["day", "vote"].includes(game.S.phase)) return;
+  if (t.dataset.co) { game.declareCo(me.seat, t.dataset.co); $("#comenu").classList.remove("open"); }
+  if (t.dataset.rep) { game.declareReport(me.seat, +t.dataset.rep, t.dataset.res); $("#comenu").classList.remove("open"); }
+});
+
+let toastTimer = null;
+function toast(text, err = false) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.className = "show" + (err ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ""; }, err ? 3500 : 1800);
+}
+
+// スマホでは、送信ボタンに触れた瞬間に入力欄のフォーカスが外れるとキーボードが閉じ、
+// ボタンが下にずれてタップが外れる。フォーカスを外さないようにしてから送る
+$("#saybtn").addEventListener("pointerdown", (ev) => ev.preventDefault());
+$("#micbtn").addEventListener("pointerdown", (ev) => ev.preventDefault());
+
+$("#say").onsubmit = (ev) => {
+  ev.preventDefault();
+  const input = $("#sayinput"), text = input.value;
+  if (game && game.submit(text)) {
+    input.value = "";
+    input.blur();
+    toast("送信しました");
+  } else {
+    toast("いまはあなたの発言の番ではありません", true);
+  }
+};
+
+// --- 音声入力: マイクを押して話すと文字になる。確かめてから送信
+const recognizer = makeRecognizer(
+  (text) => { $("#sayinput").value = text; },
+  (on, err) => {
+    $("#micbtn").classList.toggle("on", on);
+    if (err === "not-allowed") toast("マイクの使用が許可されていません。ブラウザの設定で許可してください", true);
+    else if (err && err !== "no-speech" && err !== "aborted") toast("うまく聞き取れませんでした。もう一度押して話してください", true);
+  },
+);
+$("#micbtn").onclick = () => {
+  if (!recognizer) { toast("このブラウザは音声入力に対応していません", true); return; }
+  if ($("#sayinput").disabled) { toast("あなたの番になったら話せます", true); return; }
+  recognizer.toggle();
+};
+
+if (MOCK) $("#modenote").textContent = "お試しモード（API を使わず、AI は適当に答えます）";
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => {};
+updateVoiceStatus();
+voice.checkVoicevox().then(updateVoiceStatus);
+showStart();
+frame();
+</script>
+</body>
+</html>
