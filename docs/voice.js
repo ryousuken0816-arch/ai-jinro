@@ -83,7 +83,7 @@ export class Voice {
 
   enqueue(ev, player) {
     const item = { ev, player, audio: null };
-    if (ev.type === "say" && player && !player.human && this.sound && this.vvOk && player.voice?.vv != null) {
+    if ((ev.type === "say" || ev.type === "wolf") && player && !player.human && this.sound && this.vvOk && player.voice?.vv != null) {
       item.audio = this.fetchVoicevox(ev.text, player.voice.vv); // 先に作り始めておく
     }
     this.queue.push(item);
@@ -117,7 +117,7 @@ export class Voice {
     this.busy = true;
     const item = this.queue.shift();
     this.onShow(item.ev);
-    if (item.ev.type === "say" && item.player && !item.player.human) {
+    if ((item.ev.type === "say" || item.ev.type === "wolf") && item.player && !item.player.human) {
       this.onSpeaking(item.player, null);
       await this.present(item);
       this.onSpeaking(null, null);

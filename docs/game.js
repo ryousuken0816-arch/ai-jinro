@@ -198,9 +198,9 @@ export class Game {
   save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.S)); } catch {} }
   stop() { this.stopped = true; if (this.resolveHuman) this.resolveHuman(null); }
 
-  emit(type, { text = "", seat = null, line = "", priv = false, summary = "" } = {}) {
+  emit(type, { text = "", seat = null, line = "", priv = false, summary = "", aud = "" } = {}) {
     const ev = { id: this.S.events.length + 1, type, day: this.S.day, text, seat,
-      name: seat ? this.bySeat(seat).name : "", private: priv, line, summary };
+      name: seat ? this.bySeat(seat).name : "", private: priv, line, summary, aud };
     this.S.events.push(ev);
     this.ui.onEvent(ev);
     return ev;
@@ -225,7 +225,7 @@ export class Game {
   submit(value, elapsed = null) {
     const p = this.S.pending;
     if (!p || !this.resolveHuman) return false;
-    if (p.kind === "speak") {
+    if (p.kind === "speak" || p.kind === "wolfchat") {
       value = String(value ?? "").trim().slice(0, 600);
       this.lastElapsed = elapsed;
     } else if (!p.options.includes(value)) return false;
@@ -315,7 +315,7 @@ ${p.persona.text}
     if (p.secrets.length) { lines.push("【あなただけが知っていること】"); for (const s of p.secrets) lines.push(`- ${s}`); }
     if (p.thoughts.length) { lines.push("【自分用メモ（前に考えたこと）】"); for (const t of p.thoughts.slice(-5)) lines.push(`- ${t}`); }
     lines.push("【ここまでの発言と出来事】");
-    const log = S.events.filter((e) => e.line).map((e) => e.line).slice(-100);
+    const log = S.events.filter((e) => e.line && (!e.aud || (e.aud === "wolves" && isWolf(p)))).map((e) => e.line).slice(-100);
     lines.push(...(log.length ? log : ["（まだ何もない）"]));
     return lines.join("\n");
   }
@@ -551,6 +551,47 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     if (w) { await this.ui.waitPresenter(0); this.finish(w); } else this.S.cursor = { stage: "night" };
   }
 
+  // --- 夜の人狼の相談タイム（人狼だけに見える）
+
+  async wolfTalk(w, task) {
+    const partner = this.alive().filter((q) => isWolf(q) && q !== w).map(label).join("、");
+    const text = await this.ask(w, `いまは ${this.S.day} 日目の夜、人狼どうしの相談タイムです（ほかの人には見えない）。相方の人狼: ${partner}。
+${task}
+2〜3 文で、キャラクターの口調で、相方に向けて話して。
+
+次の形式で答えて:
+考え: （自分用の整理を 1 文）
+発言: （相方への言葉）`);
+    const f = parseFields(text);
+    this.remember(w, f["考え"] || "");
+    return clip((f["発言"] || text).trim(), charsFor(30)) || "……";
+  }
+
+  async wolfMeeting(wolves) {
+    await this.ui.waitPresenter(0);
+    const day = this.S.day;
+    this.emit("sys", { text: "人狼の相談タイム（人狼だけに見えています）", aud: "wolves", line: `${day}日目夜: 人狼の相談` });
+    const say = async (w, task) => {
+      const t = await this.wolfTalk(w, task);
+      if (this.stopped) return;
+      this.emit("wolf", { text: t, seat: w.seat, aud: "wolves", line: `${day}日目夜 人狼の相談 ${label(w)}: 「${t}」` });
+    };
+    const human = wolves.find((w) => w.human), ai = wolves.filter((w) => !w.human);
+    if (human) {
+      await say(ai[0], "今夜の襲撃先の候補と理由を相方に提案して。");
+      await this.ui.waitPresenter(0);
+      if (this.stopped) return;
+      const reply = await this.waitHuman("wolfchat", "人狼の相談タイム。相方に返事をしてください（空のまま送ると相方に任せます）", [], 60);
+      if (reply === null || this.stopped) return;
+      this.emit("wolf", { text: reply || "（任せる）", seat: human.seat, aud: "wolves", line: `${day}日目夜 人狼の相談 ${label(human)}: 「${reply || "任せる"}」` });
+      await say(ai[0], "相方の返事を受けて、今夜の襲撃先をまとめて。明日の昼の動き方（騙るか、潜伏か、相方をどう扱うか）も一言。");
+    } else {
+      await say(ai[0], "今夜の襲撃先の候補と理由、明日の昼の作戦（誰が占い師を騙るか、潜伏するか）を相方に提案して。");
+      await say(ai[1], "相方の提案に答えて。賛成か、別の候補か。明日の昼の作戦も合わせて。");
+    }
+    await this.ui.waitPresenter(0);
+  }
+
   async stepNight() {
     await this.ui.waitPresenter(0);
     this.setPhase("night", `${this.S.day}日目 夜`);
@@ -560,10 +601,13 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
       if (p.role === "占い師") return [alive.filter((q) => q !== p), "占う相手"];
       return [alive.filter((q) => q !== p && label(q) !== this.S.lastGuard), "守る相手"];
     };
+    const wolves = alive.filter(isWolf);
+    if (wolves.length >= 2) { await this.wolfMeeting(wolves); if (this.stopped) return; }
     const actors = alive.filter((p) => ["人狼", "占い師", "騎士"].includes(p.role));
     const jobs = actors.filter((p) => !p.human).map((p) => {
       const [cands, what] = options(p);
-      return this.aiChoose(p, `夜です。${p.role}として、今夜${what}を選んでください。`, cands).then((t) => [p, t]);
+      const agreed = p.role === "人狼" && wolves.length >= 2 ? "さっきの人狼の相談で決めた相手を選んで。" : "";
+      return this.aiChoose(p, `夜です。${p.role}として、今夜${what}を選んでください。${agreed}`, cands).then((t) => [p, t]);
     });
     const picks = new Map();
     const me = actors.find((p) => p.human);
@@ -585,7 +629,8 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     }
     const wolfPicks = [...picks].filter(([p]) => isWolf(p));
     const humanWolf = wolfPicks.find(([p]) => p.human);
-    const victim = humanWolf ? humanWolf[1] : pick(wolfPicks.map(([, t]) => t));
+    const lead = wolfPicks.find(([p]) => p === wolves[0]);
+    const victim = humanWolf ? humanWolf[1] : (lead ? lead[1] : pick(wolfPicks.map(([, t]) => t)));
     const guard = [...picks].find(([p]) => p.role === "騎士")?.[1] || null;
     this.S.lastGuard = guard ? label(guard) : null;
     for (const w of alive.filter(isWolf)) w.secrets.push(`${this.S.day}日目夜: ${label(victim)} を襲撃した`);

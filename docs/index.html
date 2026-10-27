@@ -757,7 +757,7 @@ function render() {
   $("#phase").textContent = S.over ? `ゲーム終了 ― ${S.winner || ""}の勝利`
     : firstNight ? `初日の夜　生存 ${alive}/${S.players.length}` : `${S.day}日目 ${ph}　生存 ${alive}/${S.players.length}`;
   $("#hint").textContent = pend ? pend.prompt : "";
-  const speak = pend && pend.kind === "speak";
+  const speak = pend && (pend.kind === "speak" || pend.kind === "wolfchat");
   $("#sayinput").disabled = !speak; $("#saybtn").disabled = !speak;
   $("#sayinput").placeholder = speak ? "発言を入力（空のまま送ると黙ります）" : (S.me && !S.me.alive ? "あなたは死亡しました（観戦中）" : "発言の順番を待っています");
   const counts = {}; (S.setup || []).forEach((r) => counts[r] = (counts[r] || 0) + 1);
@@ -778,6 +778,7 @@ function render() {
   const kind = pend ? pend.kind : null;
   if (kind && kind !== lastPendingKind) {
     if (kind === "speak") announce("あなたの発言です");
+    else if (kind === "wolfchat") announce("人狼の相談タイム");
     else toast(kind === "vote" ? "投票の時間です。追放したい人をタップしてください" : "夜の行動を選んでください");
     if (navigator.vibrate) navigator.vibrate(150);
   }
@@ -805,8 +806,9 @@ function declutterLabels() {
 
 function renderCaption() {
   const c = $("#caption");
-  if (!lastSpeech || (S && S.phase === "night")) { c.innerHTML = ""; return; }
-  const html = `<b>${lastSpeech.seat ? lastSpeech.seat + " " : ""}${esc(lastSpeech.name)}</b>`
+  if (!lastSpeech || (S && S.phase === "night" && lastSpeech.type !== "wolf")) { c.innerHTML = ""; return; }
+  const html = (lastSpeech.type === "wolf" ? `<span class="sum" style="background:#ffd0cc;color:#7a1d14">狼の相談</span>` : "")
+    + `<b>${lastSpeech.seat ? lastSpeech.seat + " " : ""}${esc(lastSpeech.name)}</b>`
     + (lastSpeech.summary ? `<span class="sum">${esc(lastSpeech.summary)}</span>` : "") + esc(lastSpeech.text);
   if (c.innerHTML !== html) { c.innerHTML = html; c.classList.remove("full"); }
   c.style.bottom = (innerHeight - $("#bottom").getBoundingClientRect().top + 8) + "px";
@@ -819,10 +821,12 @@ function addLog(e) {
   else if (e.type === "co") html = `【CO】${esc(e.name)} が${esc(e.text)}`;
   else if (e.type === "report") html = `【報告】${esc(e.name)}：${esc(e.text)}`;
   else if (e.type === "secret") html = `（${esc(e.text)}）`;
+  else if (e.type === "wolf") html = `<span style="color:#ff8a80">【狼の相談】</span><b>${esc(e.name)}</b>：${esc(e.text)}`;
   else html = esc(e.text);
   log.insertAdjacentHTML("beforeend", `<div class="e ${e.type}">${html}</div>`);
   log.scrollTop = log.scrollHeight;
   if (e.type === "say") { lastSpeech = e; if (e.summary) stanceShown[e.seat] = e.summary; }
+  if (e.type === "wolf") lastSpeech = e;
   if (e.type === "co") { coShown[e.seat] = { role: e.text.replace(" CO", ""), results: coShown[e.seat]?.results || [] }; coFresh[e.seat] = Date.now(); }
   if (e.type === "report") {
     const m = e.text.match(/^(.+) は(白|黒)/), t = m && S && S.players.find((p) => p.name === m[1]);
@@ -898,7 +902,13 @@ let keyFromQr = false;
 }
 
 // 本人だけが知っている出来事（考え・夜の行動）は、観戦なら視点の人のものだけ見せる
-function visibleToMe(ev, st) { return !ev.private || (st && st.watch && ev.seat === st.viewSeat); }
+function visibleToMe(ev, st) {
+  if (!st) return !ev.private && !ev.aud;
+  const meSeat = st.watch ? st.viewSeat : (st.players.find((p) => p.human) || {}).seat;
+  const me = meSeat ? st.players[meSeat - 1] : null;
+  if (ev.aud === "wolves") return !!me && me.role === "人狼";
+  return !ev.private || (st.watch && ev.seat === st.viewSeat);
+}
 
 // render() などが使う形に、ゲームの状態をまとめる
 function view() {
@@ -928,6 +938,7 @@ const ui = {
     const p = ev.seat ? game.S.players[ev.seat - 1] : null;
     // あなたが押した CO・結果は、AI の発言の順番待ちに並ばずにすぐ出す
     if (p && p.human && (ev.type === "co" || ev.type === "report")) { voice.onShow(ev); return; }
+    if (ev.aud && !visibleToMe(ev, game.S)) return;
     voice.enqueue(ev, p);
   },
   update: () => refresh(),
@@ -1146,7 +1157,7 @@ async function polish(raw) {
 }
 
 async function finishSpeech(reason) {
-  if (finishing || !game || !game.S.pending || game.S.pending.kind !== "speak") return;
+  if (finishing || !game || !game.S.pending || !["speak", "wolfchat"].includes(game.S.pending.kind)) return;
   finishing = true;
   const input = $("#sayinput"), turn = speakTurn;
   const elapsed = speakStart ? Math.round((Date.now() - speakStart) / 1000) : null;
@@ -1167,13 +1178,13 @@ async function finishSpeech(reason) {
 
 $("#say").onsubmit = (ev) => {
   ev.preventDefault();
-  if (!game || !game.S.pending || game.S.pending.kind !== "speak") { toast("いまはあなたの発言の番ではありません", true); return; }
+  if (!game || !game.S.pending || !["speak", "wolfchat"].includes(game.S.pending.kind)) { toast("いまはあなたの発言の番ではありません", true); return; }
   finishSpeech("button");
 };
 
 setInterval(() => {
   const pend = game && game.S.pending;
-  if (!pend || pend.kind !== "speak") { speakStart = null; $("#hint").classList.remove("hurry"); return; }
+  if (!pend || !["speak", "wolfchat"].includes(pend.kind)) { speakStart = null; $("#hint").classList.remove("hurry"); return; }
   if (speakStart === null) {
     // 自分の番が始まった: 入力欄を空にして、自動でマイクを入れる
     speakStart = Date.now();
