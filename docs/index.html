@@ -54,6 +54,14 @@ input { font: inherit; }
 #toast { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 15; background: rgba(20, 24, 34, .92); border: 1px solid #4a5468;
   border-radius: 8px; padding: 6px 14px; font-size: 13px; pointer-events: none; opacity: 0; transition: opacity .3s; white-space: nowrap; }
 #toast.show { opacity: 1; }
+.rolegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.rolegrid button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; text-align: left; }
+.rolegrid button b { font-size: 15px; }
+.rolegrid button small { font-size: 11px; color: var(--muted); }
+.rolegrid .wide { grid-column: 1 / -1; align-items: center; text-align: center; border-color: var(--accent); }
+.rolegrid .wolf b { color: var(--danger); }
+@media (max-height: 520px) { .rolegrid { grid-template-columns: repeat(4, 1fr); } .rolegrid button { padding: 6px 8px; } }
+#hint.hurry { color: var(--danger); }
 #micbtn { padding: 6px 10px; }
 #micbtn.on { background: var(--danger); border-color: var(--danger); }
 #credit { font-size: 10px; color: var(--text); text-shadow: 0 0 3px #000; margin-top: 4px; min-height: 12px; }
@@ -214,6 +222,21 @@ input { font: inherit; }
   </div></div>
 
   <div class="modal" id="roleModal"><div class="card"><div id="rolebody"></div><div class="row"><button data-close>閉じる</button></div></div></div>
+  <div class="modal" id="pickRoleModal"><div class="card">
+    <h2>役職を選ぶ</h2>
+    <p style="color:var(--muted);font-size:13px">選んだ役職以外は、AI たちにランダムに配られます。</p>
+    <div class="rolegrid">
+      <button data-role="" class="wide"><b>ランダム</b><small>何になるかはお楽しみ</small></button>
+      <button data-role="村人"><b>村人</b><small>話し合いで人狼を探す</small></button>
+      <button data-role="占い師"><b>占い師</b><small>毎晩 1 人を占う</small></button>
+      <button data-role="霊媒師"><b>霊媒師</b><small>処刑された人を見る</small></button>
+      <button data-role="騎士"><b>騎士</b><small>毎晩 1 人を守る</small></button>
+      <button data-role="人狼" class="wolf"><b>人狼</b><small>仲間と村を襲う</small></button>
+      <button data-role="狂人" class="wolf"><b>狂人</b><small>人狼の味方をする人間</small></button>
+    </div>
+    <div class="row"><button data-close>戻る</button></div>
+  </div></div>
+
   <div class="modal" id="settingsModal"><div class="card">
     <h2>設定</h2>
     <p id="keystatus"></p>
@@ -229,8 +252,8 @@ input { font: inherit; }
 
 <script type="module">
 import * as THREE from "three";
-import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES } from "./game.js";
-import { Voice, makeRecognizer } from "./voice.js";
+import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES, SPEECH_SECONDS, fixTranscript } from "./game.js";
+import { Voice, makeRecognizer, normalizeSpeech } from "./voice.js";
 
 const $ = (s) => document.querySelector(s);
 const SEAT_R = 4.2;
@@ -778,9 +801,9 @@ async function begin(state, resumed) {
   game.run();
 }
 
-function start(watch) {
+function start(watch, role) {
   $("#starterr").textContent = "";
-  begin(newState({ watch, humanName: $("#nameinput").value.trim() }), false);
+  begin(newState({ watch, humanName: $("#nameinput").value.trim(), role }), false);
 }
 
 function pickSeat(seat) {
@@ -833,7 +856,17 @@ function showStart() {
   $("#startModal").classList.add("open");
 }
 
-$("#startbtn").onclick = () => start(false);
+// 「参加してはじめる」→ 役職を選ぶ画面 → 開始
+$("#startbtn").onclick = () => {
+  if (!MOCK && !readKey()) { $("#starterr").textContent = "先に「設定」で Claude の APIキーを入れてください。"; return; }
+  $("#startModal").classList.remove("open");
+  $("#pickRoleModal").classList.add("open");
+};
+$("#pickRoleModal").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-role]");
+  if (b) start(false, b.dataset.role || null);
+});
+$("#pickRoleModal [data-close]").addEventListener("click", () => showStart());
 $("#watchbtn").onclick = () => start(true);
 $("#resumebtn").onclick = () => { const s = loadSaved(); if (s) begin(s, true); };
 $("#againbtn").onclick = () => { $("#endModal").classList.remove("open"); clearSaved(); showStart(); };
@@ -886,7 +919,43 @@ $("#say").onsubmit = (ev) => {
   }
 };
 
+// --- あなたの発言時間（最大 60 秒）。時間が来たら入力中の文字をそのまま送る
+let speakStart = null;
+setInterval(() => {
+  const pend = game && game.S.pending;
+  if (!pend || pend.kind !== "speak") { speakStart = null; $("#hint").classList.remove("hurry"); return; }
+  if (speakStart === null) speakStart = Date.now();
+  const left = Math.max(0, SPEECH_SECONDS - Math.floor((Date.now() - speakStart) / 1000));
+  $("#hint").textContent = fixing ? `誤変換を直しています…　残り ${left} 秒` : `${pend.prompt}　残り ${left} 秒`;
+  $("#hint").classList.toggle("hurry", left <= 10);
+  if (left === 0 && !fixing) {
+    recognizer?.stop?.();
+    const text = $("#sayinput").value;
+    if (game.submit(text)) { $("#sayinput").value = ""; $("#sayinput").blur(); toast(text.trim() ? "時間切れのため送信しました" : "時間切れです（黙ったことになります）"); }
+  }
+}, 250);
+
 // --- 音声入力: マイクを押して話すと文字になる。確かめてから送信
+// 話し終わったら、決まった直し方（番号・用語）→ Claude による誤変換直し の順に整えて、入力欄に入れる
+let fixing = false;
+async function polishTranscript(raw) {
+  const input = $("#sayinput");
+  let text = normalizeSpeech(raw);
+  input.value = text;
+  if (!game || MOCK || !game.brain.quick) return;
+  fixing = true;
+  const before = input.value;
+  input.placeholder = "誤変換を直しています…";
+  $("#hint").textContent = "誤変換を直しています…";
+  try {
+    const fixed = await fixTranscript(game.brain, text, game.S.players);
+    // 直している間にあなたが書き換えていたら、そちらを優先する
+    if (input.value === before && fixed) { input.value = fixed; if (fixed !== text) toast("聞き間違いを直しました。確かめて送信してください"); }
+  } catch { /* 直せなくても、決まった直し方の結果はそのまま使える */ }
+  fixing = false;
+  refresh();
+}
+
 const recognizer = makeRecognizer(
   (text) => { $("#sayinput").value = text; },
   (on, err) => {
@@ -894,6 +963,7 @@ const recognizer = makeRecognizer(
     if (err === "not-allowed") toast("マイクの使用が許可されていません。ブラウザの設定で許可してください", true);
     else if (err && err !== "no-speech" && err !== "aborted") toast("うまく聞き取れませんでした。もう一度押して話してください", true);
   },
+  (finalText) => polishTranscript(finalText),
 );
 $("#micbtn").onclick = () => {
   if (!recognizer) { toast("このブラウザは音声入力に対応していません", true); return; }

@@ -96,9 +96,13 @@ export class Voice {
     this.waiters = this.waiters.filter((w) => { if (this.queued() <= w.max) { w.resolve(); return false; } return true; });
   }
 
-  cancel() {
+  stopAudio() {
     try { this.audio.pause(); } catch {}
     if ("speechSynthesis" in window) speechSynthesis.cancel();
+  }
+
+  cancel() {
+    this.stopAudio();
     if (this.skip) this.skip();
   }
 
@@ -129,7 +133,9 @@ export class Voice {
     } else {
       speaking = this.speakDevice(text, item.player);
     }
-    await Promise.race([speaking, skipped]);
+    // 発言時間は最大 60 秒。それを過ぎたら読み上げを止めて次の人へ
+    const limit = sleep(60_000).then(() => this.stopAudio());
+    await Promise.race([speaking, skipped, limit]);
     this.skip = null;
   }
 
@@ -178,25 +184,54 @@ export class Voice {
 
 // --- 音声入力（ブラウザの機能を使う）
 
-export function makeRecognizer(onText, onState) {
+// onText(途中の文字) は話している最中に、onFinal(最後の文字) は話し終わったときに呼ばれる
+export function makeRecognizer(onText, onState, onFinal) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
   const r = new SR();
   r.lang = "ja-JP";
   r.interimResults = true;
   r.continuous = false;
-  let active = false;
+  let active = false, last = "";
   r.onresult = (e) => {
     let t = "";
     for (const res of e.results) t += res[0].transcript;
+    last = t;
     onText(t);
   };
-  r.onend = () => { active = false; onState(false); };
+  r.onend = () => { active = false; onState(false); if (last) onFinal(last); last = ""; };
   r.onerror = (e) => { active = false; onState(false, e.error); };
   return {
     toggle() {
       if (active) { r.stop(); return; }
+      last = "";
       try { r.start(); active = true; onState(true); } catch { onState(false, "start"); }
     },
+    stop() { if (active) r.stop(); },
   };
+}
+
+// --- 音声入力の誤変換を、決まった直し方で直す（数字・席番号・人狼の用語）
+
+const KANJI_NUM = { "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9 };
+const READ_NUM = { "いち": 1, "に": 2, "さん": 3, "よん": 4, "ご": 5, "ろく": 6, "なな": 7, "はち": 8, "きゅう": 9 };
+const TERMS = [
+  [/シーオー|しーおー|シーオウ|C\s*O|ｃｏ|ＣＯ/gi, "CO"],
+  [/占い[しし氏市死]|うらないし|裏内し/g, "占い師"],
+  [/霊媒[しし氏市死]|れいばいし|霊倍し/g, "霊媒師"],
+  [/人郎|陣狼|人老|じんろう/g, "人狼"],
+  [/凶人|強人|きょうじん/g, "狂人"],
+  [/棋士|きし(?=[がはをにのもC])/g, "騎士"],
+  [/グレーラン|ぐれらん/g, "グレラン"],
+  [/ローラ(?!ー)/g, "ローラー"],
+];
+
+export function normalizeSpeech(text) {
+  let t = text.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  // 「三番」「さんばん」「3版」「3晩」→「3番」
+  t = t.replace(/([一二三四五六七八九])\s*(?:番|版|晩|盤|バン|ばん)/g, (_, k) => `${KANJI_NUM[k]}番`);
+  t = t.replace(/(いち|さん|よん|ろく|なな|はち|きゅう)ばん/g, (_, r) => `${READ_NUM[r]}番`);
+  t = t.replace(/([1-9])\s*(?:版|晩|盤|バン|ばん)/g, "$1番");
+  for (const [re, to] of TERMS) t = t.replace(re, to);
+  return t;
 }

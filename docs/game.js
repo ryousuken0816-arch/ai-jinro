@@ -27,6 +27,16 @@ export const ROLES = {
 export const SETUP = ["人狼", "人狼", "狂人", "占い師", "霊媒師", "騎士", "村人", "村人", "村人"];
 const CO_ROLES = ["占い師", "霊媒師", "騎士", "村人"];
 const ROUNDS = 2;
+export const SPEECH_SECONDS = 60;   // 1 回の発言時間の上限
+const MAX_SPEECH = 250;             // 60 秒で読み上げられる字数の目安
+
+// 長すぎる発言は、上限の字数までの最後の句点で切る
+function clip(text) {
+  if ([...text].length <= MAX_SPEECH) return text;
+  const head = [...text].slice(0, MAX_SPEECH).join("");
+  const cut = Math.max(head.lastIndexOf("。"), head.lastIndexOf("！"), head.lastIndexOf("？"));
+  return cut > MAX_SPEECH * 0.5 ? head.slice(0, cut + 1) : head + "…";
+}
 
 const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
@@ -57,6 +67,39 @@ export class ClaudeBrain {
     if (r.stop_reason === "refusal") return "";
     return r.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   }
+
+  // 音声入力の誤変換直しのような、すぐ返してほしい短い頼みごと（考える量を少なくする）
+  async quick(system, user) {
+    if (!this.client) {
+      const { default: Anthropic } = await import(SDK_URL);
+      this.client = new Anthropic({ apiKey: this.apiKey, dangerouslyAllowBrowser: true });
+    }
+    const r = await this.client.beta.messages.create({
+      model: MODEL, max_tokens: 2000, system,
+      messages: [{ role: "user", content: user }],
+      output_config: { effort: "low" },
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+    });
+    if (r.stop_reason === "refusal") return "";
+    return r.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+  }
+}
+
+// 音声入力の文字を、参加者の名前と人狼の用語を踏まえて直してもらう
+export async function fixTranscript(brain, text, players) {
+  if (!brain.quick) return text;
+  const names = players.map((p) => `${p.seat}番 ${p.name}`).join("、");
+  const system = `あなたは人狼ゲームの音声入力の誤変換を直す係です。
+参加者: ${names}
+よく出る言葉: CO、占い師、霊媒師、騎士、村人、人狼、狂人、白、黒、グレー、グレラン、ローラー、吊り、噛み、縄、真、偽、確白、潜伏、対抗、指定、ラン、精査、矢印、エンドポジ、トップバッター
+ルール:
+- 聞き間違い・変換ミスと思われるところだけを直す（例:「参版」→「3番」、「占いし」→「占い師」、名前の聞き間違い）
+- 言い回しや内容、話し言葉の口調は変えない。足したり要約したりしない
+- 直した文だけを返す。説明や引用符は付けない`;
+  const out = await brain.quick(system, text);
+  // 直した結果が元と大きく違うときは、勝手に書き換えたとみなして元のまま使う
+  return out && out.length <= text.length * 1.5 + 10 ? out : text;
 }
 
 export class MockBrain {
@@ -92,7 +135,7 @@ export function clearSaved() {
   try { localStorage.removeItem(SAVE_KEY); } catch {}
 }
 
-export function newState({ watch, humanName }) {
+export function newState({ watch, humanName, role }) {
   const cast = randomCast(watch ? 9 : 8);
   let name = (humanName || "あなた").slice(0, 10);
   while (cast.some((c) => c.name === name)) name += "2";
@@ -100,6 +143,11 @@ export function newState({ watch, humanName }) {
   if (!watch) entries.push({ name, persona: null, human: true });
   shuffle(entries);
   const roles = shuffle(SETUP.slice());
+  // あなたが役職を選んだときは、その役職をあなたの席に回す
+  if (role && !watch && SETUP.includes(role)) {
+    const hi = entries.findIndex((e) => e.human), ri = roles.indexOf(role);
+    [roles[hi], roles[ri]] = [roles[ri], roles[hi]];
+  }
   const players = entries.map((e, i) => ({
     seat: i + 1, name: e.name, persona: e.persona, human: e.human, role: roles[i],
     alive: true, co: "", secrets: [], thoughts: [], voice: null,
@@ -306,7 +354,7 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     }
     let speech = f["発言"] || text.trim();
     speech = speech.replace(new RegExp(`^[「『]?(?:${p.seat}番)?${p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[」』]?[:：]?`), "").trim().replace(/^「|」$/g, "");
-    return speech || "……";
+    return clip(speech) || "……";
   }
 
   async aiChoose(p, task, candidates) {
@@ -322,8 +370,9 @@ CO: （今この発言で役職を宣言するなら 占い師 / 霊媒師 / 騎
     const pos = index === 0 ? "トップバッター（最初）" : index === 1 ? "2 番手（トップの次）" : index >= total - 2 ? "エンドポジ（最後のほう）" : "中盤";
     let task = `いまは ${this.S.day} 日目の昼、話し合い ${round} 周目で、あなたの番です。今日の発言順で ${index + 1}/${total} 番目、${pos}の席です。\n`;
     task += round === 1
-      ? "1 周目なので、セオリーの「1 周目」と、あなたの席の位置の型に沿って話して（短め、60 秒くらいの量）。役職を CO するならここ。"
-      : "2 周目なので、占いの真偽の判断と、今日投票したい人を 1〜2 人、席番号ではっきり言って（長め、90 秒くらいの量）。";
+      ? "1 周目なので、セオリーの「1 周目」と、あなたの席の位置の型に沿って話して（短め、30〜40 秒くらいの量）。役職を CO するならここ。"
+      : "2 周目なので、占いの真偽の判断と、今日投票したい人を 1〜2 人、席番号ではっきり言って（長めでよいが 60 秒以内）。";
+    task += `\n発言時間は最大 60 秒。読み上げて 60 秒以内に収まる長さ（${MAX_SPEECH} 字まで）にすること。`;
     if (this.S.day >= 2) task += "\n2 日目以降なので、昨日の投票先と、昨夜誰が噛まれたかを推理の材料にして。";
     return task;
   }
