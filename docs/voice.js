@@ -84,7 +84,8 @@ export class Voice {
   enqueue(ev, player) {
     const item = { ev, player, audio: null };
     if ((ev.type === "say" || ev.type === "wolf") && player && !player.human && this.sound && this.vvOk && player.voice?.vv != null) {
-      item.audio = this.fetchVoicevox(ev.text, player.voice.vv); // 先に作り始めておく
+      // 1 文ずつ、先に作り始めておく（長い発言でも話し始めが早く、途中で切れにくい）
+      item.audio = Voice.chunks(ev.text).map((t) => ({ text: t, url: this.fetchVoicevox(t, player.voice.vv) }));
     }
     this.queue.push(item);
     this.pump();
@@ -138,14 +139,40 @@ export class Voice {
     if (!this.sound) {
       speaking = sleep(Math.min(2000 + text.length * 90, 12000));  // 音なし: 読む時間だけ待つ
     } else if (item.audio) {
-      speaking = item.audio.then((url) => url ? this.playUrl(url, item.player) : this.speakDevice(text, item.player));
+      speaking = this.playVoicevox(item.audio, text, item.player);
     } else {
       speaking = this.speakDevice(text, item.player);
     }
-    // 持ち時間（最大 90 秒）を過ぎたら読み上げを止めて次の人へ。読み上げの速さの差で切れないよう少し余裕をみる
-    const limit = sleep(100_000).then(() => this.stopAudio());
+    // 持ち時間（最大 90 秒）を過ぎたら読み上げを止めて次の人へ。読み上げの速さの差で切れないよう少し余裕をみる。
+    // 喋り終わったら必ず見張りを解除する（解除し忘れると、あとの人の声を途中で止めてしまう）
+    let limitTimer;
+    const limit = new Promise((r) => { limitTimer = setTimeout(() => { this.stopAudio(); r(); }, 100_000); });
     await Promise.race([speaking, skipped, limit]);
+    clearTimeout(limitTimer);
     this.skip = null;
+  }
+
+  // 1 文ずつ（短い文はまとめて 100 字くらいずつ）に分ける
+  static chunks(text) {
+    const parts = text.match(/[^。！？!?\n]+[。！？!?\n]*/g) || [text];
+    const out = [];
+    for (const p of parts.map((x) => x.trim()).filter(Boolean)) {
+      if (out.length && (out[out.length - 1] + p).length <= 100) out[out.length - 1] += p;
+      else out.push(p);
+    }
+    return out.length ? out : [text];
+  }
+
+  // VOICEVOX の声を 1 かたまりずつ順に流す。作れなかったかたまりはスマホの声で読む
+  async playVoicevox(jobs, text, player) {
+    const token = (this.speakToken = (this.speakToken || 0) + 1);
+    for (const job of jobs) {
+      if (token !== this.speakToken) return;    // 飛ばされた
+      const url = await job.url;
+      if (token !== this.speakToken) { if (url) URL.revokeObjectURL(url); return; }
+      if (url) await this.playUrl(url, player);
+      else await this.speakOne(job.text, player);
+    }
   }
 
   async fetchVoicevox(text, speaker) {

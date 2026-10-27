@@ -64,7 +64,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = min(int(self.headers.get("Content-Length", 0)), 20_000)
             data = json.loads(self.rfile.read(length) or b"{}")
-            text = str(data.get("text", ""))[:400]
+            # 長い発言（2 周目の 90 秒ぶん）でも途中で切れないよう、上限は大きめにとる
+            text = str(data.get("text", ""))[:1500]
             speaker = int(data.get("speaker", 3))
             query = vv("/audio_query?" + urllib.parse.urlencode({"text": text, "speaker": speaker}))
             wav = vv(f"/synthesis?speaker={speaker}", data=query, headers={"Content-Type": "application/json"})

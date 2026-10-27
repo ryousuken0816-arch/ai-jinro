@@ -254,6 +254,7 @@ input { font: inherit; }
     <h2>AI人狼 9人村</h2>
     <p>人狼2・狂人1・占い師・霊媒師・騎士・村人3。あなた以外の8人は Claude です。</p>
     <p id="modenote" style="color:var(--accent);font-size:13px"></p>
+    <p style="color:var(--muted);font-size:11px;margin:0">版: 2026-10-27e</p>
     <p style="color:var(--muted);font-size:13px">広場はドラッグ（スマホは指でなぞる）で回せます。PCはホイールで寄ったり引いたりできます。</p>
     <div class="row"><input type="text" id="nameinput" placeholder="あなたの名前" maxlength="10"></div>
     <div class="row"><button id="resumebtn" style="display:none">続きから</button><button id="startbtn">参加してはじめる</button><button id="watchbtn">観戦する</button><button id="startsettings">設定</button></div>
@@ -277,7 +278,7 @@ input { font: inherit; }
   </div></div>
 
   <div class="modal" id="settingsModal"><div class="card">
-    <h2>設定</h2>
+    <h2>設定 <small style="font-size:11px;color:var(--muted);font-weight:normal">版: 2026-10-27e</small></h2>
     <p id="keystatus"></p>
     <div class="row"><input type="text" id="keyinput" placeholder="Claude の APIキー（sk-…）" autocomplete="off" style="-webkit-text-security:disc"><button id="savekey">保存</button></div>
     <p style="color:var(--muted);font-size:12px">APIキーはこのスマホ（ブラウザ）の中にだけ保存されます。打つのが面倒なときは、PC で「スマホにAPIキーを入れる.bat」を押して、出てきた QR コードを読むだけで入ります。</p>
@@ -293,8 +294,8 @@ input { font: inherit; }
 
 <script type="module">
 import * as THREE from "three";
-import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES, fixTranscript } from "./game.js";
-import { Voice, makeRecognizer, normalizeSpeech, GAPS } from "./voice.js";
+import { Game, newState, loadSaved, clearSaved, ClaudeBrain, MockBrain, SETUP, ROLES, fixTranscript } from "./game.js?v=2026-10-27e";
+import { Voice, makeRecognizer, normalizeSpeech, GAPS } from "./voice.js?v=2026-10-27e";
 
 const $ = (s) => document.querySelector(s);
 const SEAT_R = 4.2;
